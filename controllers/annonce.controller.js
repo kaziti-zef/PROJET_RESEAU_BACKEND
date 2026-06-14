@@ -1,5 +1,4 @@
 const pool = require('../config/db');
-const path = require('path');
 
 // ============================================
 // CRÉER UNE ANNONCE (Hôte)
@@ -22,7 +21,6 @@ const creerAnnonce = async (req, res) => {
 
     const annonce = result.rows[0];
 
-    // Traiter les images uploadées
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         const imageUrl = `${process.env.UPLOAD_PATH || 'uploads/images'}/${file.filename}`;
@@ -33,7 +31,6 @@ const creerAnnonce = async (req, res) => {
       }
     }
 
-    // Récupérer l'annonce avec ses images
     const annonceComplete = await getAnnonceAvecImages(annonce.id);
 
     return res.status(201).json({
@@ -91,7 +88,6 @@ const getAnnonces = async (req, res) => {
   try {
     const result = await pool.query(query, params);
 
-    // Compter le total
     let countQuery = `SELECT COUNT(*) FROM annonces a WHERE a.disponible = true`;
     const countParams = [];
     let countIndex = 1;
@@ -182,32 +178,42 @@ const getMesAnnonces = async (req, res) => {
 
 // ============================================
 // MODIFIER UNE ANNONCE (Hôte)
+// FIX: on récupère d'abord les valeurs actuelles pour ne pas écraser avec null
+// FIX: quartier ajouté
 // ============================================
 const modifierAnnonce = async (req, res) => {
   const { id } = req.params;
   const hote_id = req.user.id;
-  const { titre, description, ville, quartier, adresse, prix, capacite, disponible } = req.body;
 
   try {
-    // Vérifier que l'annonce appartient à cet hôte
-    const check = await pool.query('SELECT id FROM annonces WHERE id = $1 AND hote_id = $2', [id, hote_id]);
-    if (check.rows.length === 0) {
+    // Récupérer l'annonce actuelle
+    const actuelle = await pool.query(
+      'SELECT * FROM annonces WHERE id = $1 AND hote_id = $2',
+      [id, hote_id]
+    );
+
+    if (actuelle.rows.length === 0) {
       return res.status(403).json({ message: 'Annonce introuvable ou non autorisé' });
     }
 
-    const result = await pool.query(
+    const courante = actuelle.rows[0];
+
+    // Fusionner : utiliser la nouvelle valeur si fournie, sinon garder l'ancienne
+    const titre      = req.body.titre      !== undefined ? req.body.titre      : courante.titre;
+    const description= req.body.description!== undefined ? req.body.description: courante.description;
+    const ville      = req.body.ville      !== undefined ? req.body.ville      : courante.ville;
+    const quartier   = req.body.quartier   !== undefined ? req.body.quartier   : courante.quartier;
+    const adresse    = req.body.adresse    !== undefined ? req.body.adresse    : courante.adresse;
+    const prix       = req.body.prix       !== undefined ? req.body.prix       : courante.prix;
+    const capacite   = req.body.capacite   !== undefined ? req.body.capacite   : courante.capacite;
+    const disponible = req.body.disponible !== undefined ? req.body.disponible : courante.disponible;
+
+    await pool.query(
       `UPDATE annonces
-       SET titre = COALESCE($1, titre),
-           description = COALESCE($2, description),
-           ville = COALESCE($3, ville),
-           quartier = COALESCE($4, quartier),
-           adresse = COALESCE($5, adresse),
-           prix = COALESCE($6, prix),
-           capacite = COALESCE($7, capacite),
-           disponible = COALESCE($8, disponible),
+       SET titre = $1, description = $2, ville = $3, quartier = $4,
+           adresse = $5, prix = $6, capacite = $7, disponible = $8,
            updated_at = NOW()
-       WHERE id = $9
-       RETURNING *`,
+       WHERE id = $9`,
       [titre, description, ville, quartier, adresse, prix, capacite, disponible, id]
     );
 
@@ -242,7 +248,10 @@ const supprimerAnnonce = async (req, res) => {
   const hote_id = req.user.id;
 
   try {
-    const check = await pool.query('SELECT id FROM annonces WHERE id = $1 AND hote_id = $2', [id, hote_id]);
+    const check = await pool.query(
+      'SELECT id FROM annonces WHERE id = $1 AND hote_id = $2',
+      [id, hote_id]
+    );
     if (check.rows.length === 0) {
       return res.status(403).json({ message: 'Annonce introuvable ou non autorisé' });
     }
@@ -264,12 +273,18 @@ const supprimerImage = async (req, res) => {
   const hote_id = req.user.id;
 
   try {
-    const check = await pool.query('SELECT id FROM annonces WHERE id = $1 AND hote_id = $2', [id, hote_id]);
+    const check = await pool.query(
+      'SELECT id FROM annonces WHERE id = $1 AND hote_id = $2',
+      [id, hote_id]
+    );
     if (check.rows.length === 0) {
       return res.status(403).json({ message: 'Non autorisé' });
     }
 
-    await pool.query('DELETE FROM annonce_images WHERE id = $1 AND annonce_id = $2', [imageId, id]);
+    await pool.query(
+      'DELETE FROM annonce_images WHERE id = $1 AND annonce_id = $2',
+      [imageId, id]
+    );
 
     return res.status(200).json({ message: 'Image supprimée' });
   } catch (err) {

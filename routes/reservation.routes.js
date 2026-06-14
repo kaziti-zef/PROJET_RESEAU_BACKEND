@@ -3,8 +3,9 @@ const router = express.Router();
 const {
   creerReservation,
   getMesReservations,
+  modifierReservation,
   getReservationsHote,
-  confirmerReservation,
+  refuserReservation,
   annulerReservation,
 } = require('../controllers/reservation.controller');
 const authMiddleware = require('../middlewares/auth.middleware');
@@ -21,7 +22,7 @@ const roleMiddleware = require('../middlewares/role.middleware');
  * @swagger
  * /reservations:
  *   post:
- *     summary: Créer une réservation (Client uniquement)
+ *     summary: Créer une réservation (Client) — passer au paiement pour confirmer
  *     tags: [Réservations]
  *     security:
  *       - bearerAuth: []
@@ -45,7 +46,7 @@ const roleMiddleware = require('../middlewares/role.middleware');
  *                 type: integer
  *     responses:
  *       201:
- *         description: Réservation créée, en attente de confirmation
+ *         description: Réservation créée EN_ATTENTE — procéder au paiement pour confirmer
  *       409:
  *         description: Conflit de dates
  */
@@ -81,9 +82,45 @@ router.get('/hote', authMiddleware, roleMiddleware('HOTE'), getReservationsHote)
 
 /**
  * @swagger
- * /reservations/{id}/confirmer:
+ * /reservations/{id}:
  *   put:
- *     summary: Confirmer une réservation (Hôte)
+ *     summary: Modifier une réservation (Client) — uniquement si EN_ATTENTE
+ *     tags: [Réservations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               date_debut:
+ *                 type: string
+ *                 format: date
+ *               date_fin:
+ *                 type: string
+ *                 format: date
+ *               nb_personnes:
+ *                 type: integer
+ *     responses:
+ *       200:
+ *         description: Réservation modifiée
+ *       400:
+ *         description: Réservation non modifiable (déjà payée ou annulée)
+ */
+router.put('/:id', authMiddleware, roleMiddleware('CLIENT'), modifierReservation);
+
+/**
+ * @swagger
+ * /reservations/{id}/refuser:
+ *   put:
+ *     summary: Refuser une réservation (Hôte) — uniquement si EN_ATTENTE
  *     tags: [Réservations]
  *     security:
  *       - bearerAuth: []
@@ -95,11 +132,11 @@ router.get('/hote', authMiddleware, roleMiddleware('HOTE'), getReservationsHote)
  *           type: integer
  *     responses:
  *       200:
- *         description: Réservation confirmée
- *       403:
- *         description: Non autorisé
+ *         description: Réservation refusée
+ *       400:
+ *         description: Réservation non refusable (déjà payée)
  */
-router.put('/:id/confirmer', authMiddleware, roleMiddleware('HOTE'), confirmerReservation);
+router.put('/:id/refuser', authMiddleware, roleMiddleware('HOTE'), refuserReservation);
 
 /**
  * @swagger

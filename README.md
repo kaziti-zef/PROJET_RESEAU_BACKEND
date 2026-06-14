@@ -36,7 +36,7 @@ psql -U postgres -d room_renting_db -f sql/init.sql
 ```
 
 ### 4. Démarrer le serveur
- 
+
 ```bash
 # Production
 npm start

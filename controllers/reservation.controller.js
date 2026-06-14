@@ -16,7 +16,6 @@ const creerReservation = async (req, res) => {
   }
 
   try {
-    // Vérifier que l'annonce existe et est disponible
     const annonce = await pool.query(
       'SELECT * FROM annonces WHERE id = $1 AND disponible = true',
       [annonce_id]
@@ -25,28 +24,26 @@ const creerReservation = async (req, res) => {
       return res.status(404).json({ message: 'Annonce introuvable ou indisponible' });
     }
 
-    // Vérifier capacité
     if (nb_personnes > annonce.rows[0].capacite) {
       return res.status(400).json({
         message: `La chambre accepte maximum ${annonce.rows[0].capacite} personne(s)`,
       });
     }
 
-    // Vérifier qu'il n'y a pas de conflit de dates
+    if (annonce.rows[0].hote_id === client_id) {
+      return res.status(400).json({ message: 'Vous ne pouvez pas réserver votre propre chambre' });
+    }
+
+    // Conflit de dates — exclure annulées et refusées
     const conflit = await pool.query(
       `SELECT id FROM reservations
        WHERE annonce_id = $1
-       AND statut NOT IN ('ANNULEE')
+       AND statut NOT IN ('ANNULEE', 'REFUSEE')
        AND (date_debut, date_fin) OVERLAPS ($2::date, $3::date)`,
       [annonce_id, date_debut, date_fin]
     );
     if (conflit.rows.length > 0) {
       return res.status(409).json({ message: 'La chambre est déjà réservée pour ces dates' });
-    }
-
-    // Vérifier que le client ne réserve pas sa propre annonce
-    if (annonce.rows[0].hote_id === client_id) {
-      return res.status(400).json({ message: 'Vous ne pouvez pas réserver votre propre chambre' });
     }
 
     const result = await pool.query(
@@ -58,7 +55,7 @@ const creerReservation = async (req, res) => {
 
     const reservation = result.rows[0];
 
-    // Émettre socket event — notifier le hôte
+    // Notifier l'hôte
     const io = req.app.get('io');
     if (io) {
       io.to(`hote_${annonce.rows[0].hote_id}`).emit('nouvelle_reservation', {
@@ -68,7 +65,7 @@ const creerReservation = async (req, res) => {
     }
 
     return res.status(201).json({
-      message: 'Réservation créée, en attente de confirmation',
+      message: 'Réservation créée. Procédez au paiement pour la confirmer.',
       reservation,
     });
   } catch (err) {
@@ -86,12 +83,8 @@ const getMesReservations = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT r.*,
-              a.titre AS annonce_titre,
-              a.ville,
-              a.quartier,
-              a.prix,
-              p.nom AS hote_nom,
-              p.prenom AS hote_prenom,
+              a.titre AS annonce_titre, a.ville, a.quartier, a.prix,
+              p.nom AS hote_nom, p.prenom AS hote_prenom,
               ARRAY_AGG(ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
        FROM reservations r
        JOIN annonces a ON r.annonce_id = a.id
@@ -111,6 +104,80 @@ const getMesReservations = async (req, res) => {
 };
 
 // ============================================
+// MODIFIER UNE RÉSERVATION (Client)
+// Possible uniquement si statut = EN_ATTENTE
+// ============================================
+const modifierReservation = async (req, res) => {
+  const { id } = req.params;
+  const client_id = req.user.id;
+
+  try {
+    const actuelle = await pool.query(
+      'SELECT * FROM reservations WHERE id = $1 AND client_id = $2',
+      [id, client_id]
+    );
+
+    if (actuelle.rows.length === 0) {
+      return res.status(404).json({ message: 'Réservation introuvable' });
+    }
+
+    const resa = actuelle.rows[0];
+
+    if (resa.statut !== 'EN_ATTENTE') {
+      return res.status(400).json({
+        message: 'Seules les réservations EN_ATTENTE peuvent être modifiées',
+      });
+    }
+
+    // Fusionner avec les valeurs actuelles
+    const date_debut   = req.body.date_debut   || resa.date_debut;
+    const date_fin     = req.body.date_fin     || resa.date_fin;
+    const nb_personnes = req.body.nb_personnes || resa.nb_personnes;
+
+    if (new Date(date_fin) <= new Date(date_debut)) {
+      return res.status(400).json({ message: 'La date de fin doit être après la date de début' });
+    }
+
+    // Vérifier capacité
+    const annonce = await pool.query('SELECT capacite FROM annonces WHERE id = $1', [resa.annonce_id]);
+    if (nb_personnes > annonce.rows[0].capacite) {
+      return res.status(400).json({
+        message: `La chambre accepte maximum ${annonce.rows[0].capacite} personne(s)`,
+      });
+    }
+
+    // Vérifier conflit de dates (en excluant la réservation actuelle)
+    const conflit = await pool.query(
+      `SELECT id FROM reservations
+       WHERE annonce_id = $1
+       AND id != $2
+       AND statut NOT IN ('ANNULEE', 'REFUSEE')
+       AND (date_debut, date_fin) OVERLAPS ($3::date, $4::date)`,
+      [resa.annonce_id, id, date_debut, date_fin]
+    );
+    if (conflit.rows.length > 0) {
+      return res.status(409).json({ message: 'La chambre est déjà réservée pour ces dates' });
+    }
+
+    const result = await pool.query(
+      `UPDATE reservations
+       SET date_debut = $1, date_fin = $2, nb_personnes = $3, updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [date_debut, date_fin, nb_personnes, id]
+    );
+
+    return res.status(200).json({
+      message: 'Réservation modifiée avec succès',
+      reservation: result.rows[0],
+    });
+  } catch (err) {
+    console.error('Erreur modification réservation:', err);
+    return res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
+
+// ============================================
 // RÉSERVATIONS DE L'HÔTE (pour ses annonces)
 // ============================================
 const getReservationsHote = async (req, res) => {
@@ -119,12 +186,8 @@ const getReservationsHote = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT r.*,
-              a.titre AS annonce_titre,
-              a.ville,
-              a.prix,
-              p.nom AS client_nom,
-              p.prenom AS client_prenom,
-              p.email AS client_email
+              a.titre AS annonce_titre, a.ville, a.prix,
+              p.nom AS client_nom, p.prenom AS client_prenom, p.email AS client_email
        FROM reservations r
        JOIN annonces a ON r.annonce_id = a.id
        JOIN personnes p ON r.client_id = p.id
@@ -141,16 +204,16 @@ const getReservationsHote = async (req, res) => {
 };
 
 // ============================================
-// CONFIRMER UNE RÉSERVATION (Hôte)
+// REFUSER UNE RÉSERVATION (Hôte)
+// Possible uniquement si EN_ATTENTE (pas encore payée)
 // ============================================
-const confirmerReservation = async (req, res) => {
+const refuserReservation = async (req, res) => {
   const { id } = req.params;
   const hote_id = req.user.id;
 
   try {
-    // Vérifier que la réservation concerne bien une annonce de cet hôte
     const check = await pool.query(
-      `SELECT r.*, a.hote_id FROM reservations r
+      `SELECT r.* FROM reservations r
        JOIN annonces a ON r.annonce_id = a.id
        WHERE r.id = $1 AND a.hote_id = $2`,
       [id, hote_id]
@@ -160,33 +223,35 @@ const confirmerReservation = async (req, res) => {
       return res.status(403).json({ message: 'Réservation introuvable ou non autorisé' });
     }
 
-    if (check.rows[0].statut !== 'EN_ATTENTE') {
-      return res.status(400).json({ message: 'Seules les réservations EN_ATTENTE peuvent être confirmées' });
+    const resa = check.rows[0];
+
+    if (resa.statut !== 'EN_ATTENTE') {
+      return res.status(400).json({
+        message: 'Impossible de refuser : la réservation n\'est plus en attente',
+      });
     }
 
     const result = await pool.query(
-      `UPDATE reservations SET statut = 'CONFIRMEE', updated_at = NOW()
+      `UPDATE reservations SET statut = 'REFUSEE', updated_at = NOW()
        WHERE id = $1 RETURNING *`,
       [id]
     );
 
-    const reservation = result.rows[0];
-
-    // Notifier le client via socket
+    // Notifier le client
     const io = req.app.get('io');
     if (io) {
-      io.to(`client_${reservation.client_id}`).emit('reservation_confirmee', {
-        message: 'Votre réservation a été confirmée !',
-        reservation,
+      io.to(`client_${resa.client_id}`).emit('reservation_refusee', {
+        message: 'Votre réservation a été refusée par l\'hôte',
+        reservation: result.rows[0],
       });
     }
 
     return res.status(200).json({
-      message: 'Réservation confirmée',
-      reservation,
+      message: 'Réservation refusée',
+      reservation: result.rows[0],
     });
   } catch (err) {
-    console.error('Erreur confirmation réservation:', err);
+    console.error('Erreur refus réservation:', err);
     return res.status(500).json({ message: 'Erreur serveur' });
   }
 };
@@ -218,14 +283,10 @@ const annulerReservation = async (req, res) => {
       return res.status(403).json({ message: 'Réservation introuvable ou non autorisé' });
     }
 
-    const reservation = check.rows[0];
+    const resa = check.rows[0];
 
-    if (reservation.statut === 'ANNULEE') {
-      return res.status(400).json({ message: 'Réservation déjà annulée' });
-    }
-
-    if (reservation.statut === 'TERMINEE') {
-      return res.status(400).json({ message: 'Impossible d\'annuler une réservation terminée' });
+    if (['ANNULEE', 'TERMINEE', 'REFUSEE'].includes(resa.statut)) {
+      return res.status(400).json({ message: `Impossible d'annuler une réservation ${resa.statut}` });
     }
 
     const result = await pool.query(
@@ -234,15 +295,26 @@ const annulerReservation = async (req, res) => {
       [id]
     );
 
-    // Notifier l'autre partie via socket
+    // Notifier l'autre partie
     const io = req.app.get('io');
     if (io) {
-      const notifyId = user.role === 'CLIENT' ? `hote_` : `client_`;
-      const notifyUserId = user.role === 'CLIENT' ? reservation.annonce_hote_id : reservation.client_id;
-      io.to(`${notifyId}${notifyUserId}`).emit('reservation_annulee', {
-        message: 'Une réservation a été annulée',
-        reservation: result.rows[0],
-      });
+      if (user.role === 'CLIENT') {
+        // Récupérer hote_id via l'annonce
+        const annonceInfo = await pool.query(
+          'SELECT hote_id FROM annonces WHERE id = $1', [resa.annonce_id]
+        );
+        if (annonceInfo.rows.length > 0) {
+          io.to(`hote_${annonceInfo.rows[0].hote_id}`).emit('reservation_annulee', {
+            message: 'Un client a annulé sa réservation',
+            reservation: result.rows[0],
+          });
+        }
+      } else {
+        io.to(`client_${resa.client_id}`).emit('reservation_annulee', {
+          message: 'L\'hôte a annulé votre réservation',
+          reservation: result.rows[0],
+        });
+      }
     }
 
     return res.status(200).json({
@@ -258,7 +330,8 @@ const annulerReservation = async (req, res) => {
 module.exports = {
   creerReservation,
   getMesReservations,
+  modifierReservation,
   getReservationsHote,
-  confirmerReservation,
+  refuserReservation,
   annulerReservation,
 };

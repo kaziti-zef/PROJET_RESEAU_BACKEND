@@ -2,6 +2,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const app = require('./app');
 const initSocket = require('./sockets/reservation.socket');
+const initDB = require('./config/initDB');
 require('dotenv').config();
 
 const PORT = process.env.PORT || 4000;
@@ -19,7 +20,7 @@ const io = new Server(server, {
 });
 
 // Rendre io accessible dans les controllers via req.app.get('io')
-app.set('io', io); 
+app.set('io', io);
 
 // Initialiser les événements socket
 initSocket(io);
@@ -27,15 +28,27 @@ initSocket(io);
 // ============================================
 // DÉMARRAGE DU SERVEUR
 // ============================================
-server.listen(PORT, () => {
-  console.log('');
-  console.log('🏠 ================================');
-  console.log('   ROOM RENTING API — DÉMARRÉ');
-  console.log('🏠 ================================');
-  console.log(`🚀 Serveur    : http://localhost:${PORT}`);
-  console.log(`📚 Swagger    : http://localhost:${PORT}/api-docs`);
-  console.log(`❤️  Health     : http://localhost:${PORT}/api/health`);
-  console.log(`🔌 Socket.io  : actif`);
-  console.log('🏠 ================================');
-  console.log('');
-});
+const start = async () => {
+  try {
+    // Créer les tables si elles n'existent pas
+    await initDB();
+
+    server.listen(PORT, () => {
+      console.log('');
+      console.log('🏠 ================================');
+      console.log('   ROOM RENTING API — DÉMARRÉ');
+      console.log('🏠 ================================');
+      console.log(`🚀 Serveur    : http://localhost:${PORT}`);
+      console.log(`📚 Swagger    : http://localhost:${PORT}/api-docs`);
+      console.log(`❤️  Health     : http://localhost:${PORT}/api/health`);
+      console.log(`🔌 Socket.io  : actif`);
+      console.log('🏠 ================================');
+      console.log('');
+    });
+  } catch (err) {
+    console.error('❌ Impossible de démarrer le serveur:', err.message);
+    process.exit(1);
+  }
+};
+
+start();

@@ -35,7 +35,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 // ROUTES API
 // ============================================
 app.use('/api/auth', authRoutes);
-app.use('/api/annonces', annonceRoutes);
+app.use('/api/annonces', annonceRoutes); 
 app.use('/api/reservations', reservationRoutes);
 app.use('/api/paiements', paiementRoutes);
 app.use('/api/avis', avisRoutes);

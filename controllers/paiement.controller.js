@@ -2,6 +2,7 @@ const pool = require('../config/db');
 
 // ============================================
 // EFFECTUER UN PAIEMENT (Client)
+// Le paiement confirme automatiquement la réservation
 // ============================================
 const effectuerPaiement = async (req, res) => {
   const { reservation_id, mode_paiement } = req.body;
@@ -13,13 +14,13 @@ const effectuerPaiement = async (req, res) => {
 
   const modesValides = ['CARTE', 'MOBILE_MONEY', 'ESPECES'];
   if (!modesValides.includes(mode_paiement)) {
-    return res.status(400).json({ message: `Mode de paiement invalide. Choisir : ${modesValides.join(', ')}` });
+    return res.status(400).json({ message: `Mode invalide. Choisir : ${modesValides.join(', ')}` });
   }
 
   try {
-    // Vérifier que la réservation appartient au client et est confirmée
+    // Vérifier que la réservation appartient au client et est EN_ATTENTE
     const reservation = await pool.query(
-      `SELECT r.*, a.prix,
+      `SELECT r.*, a.prix, a.hote_id,
               (EXTRACT(DAY FROM r.date_fin::timestamp - r.date_debut::timestamp)) AS nb_nuits
        FROM reservations r
        JOIN annonces a ON r.annonce_id = a.id
@@ -33,8 +34,16 @@ const effectuerPaiement = async (req, res) => {
 
     const resa = reservation.rows[0];
 
-    if (resa.statut !== 'CONFIRMEE') {
-      return res.status(400).json({ message: 'Le paiement n\'est possible que pour une réservation CONFIRMEE' });
+    if (resa.statut === 'REFUSEE') {
+      return res.status(400).json({ message: 'Cette réservation a été refusée par l\'hôte' });
+    }
+
+    if (resa.statut === 'ANNULEE') {
+      return res.status(400).json({ message: 'Cette réservation est annulée' });
+    }
+
+    if (resa.statut !== 'EN_ATTENTE') {
+      return res.status(400).json({ message: 'Cette réservation a déjà été payée' });
     }
 
     // Vérifier qu'il n'y a pas déjà un paiement
@@ -46,20 +55,38 @@ const effectuerPaiement = async (req, res) => {
       return res.status(409).json({ message: 'Cette réservation a déjà été payée' });
     }
 
-    // Calculer le montant total
+    // Calculer montant
     const nbNuits = Math.max(1, parseInt(resa.nb_nuits));
     const montant = nbNuits * parseFloat(resa.prix);
 
-    const result = await pool.query(
+    // Enregistrer le paiement
+    const paiement = await pool.query(
       `INSERT INTO paiements (reservation_id, montant, mode_paiement)
        VALUES ($1, $2, $3)
        RETURNING *`,
       [reservation_id, montant, mode_paiement]
     );
 
+    // Confirmer automatiquement la réservation via le paiement
+    await pool.query(
+      `UPDATE reservations SET statut = 'CONFIRMEE', updated_at = NOW()
+       WHERE id = $1`,
+      [reservation_id]
+    );
+
+    // Notifier l'hôte via socket
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`hote_${resa.hote_id}`).emit('reservation_confirmee', {
+        message: 'Une réservation vient d\'être payée et confirmée !',
+        reservation_id,
+        montant,
+      });
+    }
+
     return res.status(201).json({
-      message: 'Paiement effectué avec succès',
-      paiement: result.rows[0],
+      message: 'Paiement effectué. Réservation confirmée automatiquement.',
+      paiement: paiement.rows[0],
       details: {
         nb_nuits: nbNuits,
         prix_par_nuit: resa.prix,
