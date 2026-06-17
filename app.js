@@ -38,7 +38,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/annonces', annonceRoutes); 
 app.use('/api/reservations', reservationRoutes);
 app.use('/api/paiements', paiementRoutes);
-app.use('/api/avis', avisRoutes);
+app.use('/api/evaluations', avisRoutes);
 
 // Route de santé
 app.get('/api/health', (req, res) => {

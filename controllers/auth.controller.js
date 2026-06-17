@@ -6,40 +6,40 @@ const pool = require('../config/db');
 // INSCRIPTION
 // ============================================
 const inscription = async (req, res) => {
-  const { email, nom, prenom, mot_de_passe, role, raison_sociale } = req.body;
+  const { email, nom, prenom, motDePasse, typeCompte, raison_sociale } = req.body;
 
-  if (!email || !nom || !prenom || !mot_de_passe || !role) {
+  if (!email || !nom || !prenom || !motDePasse || !typeCompte) {
     return res.status(400).json({ message: 'Tous les champs obligatoires doivent être remplis' });
   }
 
-  if (!['CLIENT', 'HOTE'].includes(role)) {
+  if (!['CLIENT', 'HOTE'].includes(typeCompte)) {
     return res.status(400).json({ message: 'Rôle invalide. Choisir CLIENT ou HOTE' });
   }
 
-  if (role === 'HOTE' && !raison_sociale) {
+  if (typeCompte === 'HOTE' && !raison_sociale) {
     return res.status(400).json({ message: 'La raison sociale est obligatoire pour un hôte' });
   }
 
   try {
     // Vérifier si email déjà utilisé
-    const existing = await pool.query('SELECT id FROM personnes WHERE email = $1', [email]);
+    const existing = await pool.query('SELECT id FROM utilisateurs WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
       return res.status(409).json({ message: 'Email déjà utilisé' });
     }
 
-    const hashedPassword = await bcrypt.hash(mot_de_passe, 10);
+    const hashedPassword = await bcrypt.hash(motDePasse, 10);
 
     const result = await pool.query(
-      `INSERT INTO personnes (email, nom, prenom, mot_de_passe, role, raison_sociale)
+      `INSERT INTO utilisateurs (email, nom, prenom, motDePasse, typeCompte, raison_sociale)
        VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, email, nom, prenom, role, raison_sociale`,
-      [email, nom, prenom, hashedPassword, role, raison_sociale || null]
+       RETURNING id, email, nom, prenom, typeCompte, raison_sociale`,
+      [email, nom, prenom, hashedPassword, typeCompte, raison_sociale || null]
     );
 
-    const personne = result.rows[0];
+    const utilisateur = result.rows[0];
 
     const token = jwt.sign(
-      { id: personne.id, email: personne.email, role: personne.role },
+      { id: utilisateur.id, email: utilisateur.email, typeCompte: utilisateur.typecompte },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
@@ -47,7 +47,7 @@ const inscription = async (req, res) => {
     return res.status(201).json({
       message: 'Inscription réussie',
       token,
-      utilisateur: personne,
+      utilisateur: utilisateur,
     });
   } catch (err) {
     console.error('Erreur inscription:', err);
@@ -59,42 +59,44 @@ const inscription = async (req, res) => {
 // CONNEXION
 // ============================================
 const connexion = async (req, res) => {
-  const { email, mot_de_passe } = req.body;
+  const { email, motDePasse } = req.body;
 
-  if (!email || !mot_de_passe) {
+
+  if (!email || !motDePasse) {
     return res.status(400).json({ message: 'Email et mot de passe requis' });
   }
 
   try {
-    const result = await pool.query('SELECT * FROM personnes WHERE email = $1', [email]);
+    const result = await pool.query('SELECT * FROM utilisateurs WHERE email = $1', [email]);
 
     if (result.rows.length === 0) {
       return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
     }
 
-    const personne = result.rows[0];
-    const validPassword = await bcrypt.compare(mot_de_passe, personne.mot_de_passe);
+    const utilisateur = result.rows[0];
+    const validPassword = await bcrypt.compare(motDePasse, utilisateur.motdepasse);
 
     if (!validPassword) {
       return res.status(401).json({ message: 'Email ou mot de passe incorrect' });
     }
 
     const token = jwt.sign(
-      { id: personne.id, email: personne.email, role: personne.role },
+      { id: utilisateur.id, email: utilisateur.email, typeCompte: utilisateur.typecompte },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
+    console.log("ici")
 
     return res.status(200).json({
       message: 'Connexion réussie',
       token,
       utilisateur: {
-        id: personne.id,
-        email: personne.email,
-        nom: personne.nom,
-        prenom: personne.prenom,
-        role: personne.role,
-        raison_sociale: personne.raison_sociale,
+        id: utilisateur.id,
+        email: utilisateur.email,
+        nom: utilisateur.nom,
+        prenom: utilisateur.prenom,
+        typeCompte: utilisateur.typecompte,
+        raison_sociale: utilisateur.raison_sociale,
       },
     });
   } catch (err) {
@@ -109,7 +111,7 @@ const connexion = async (req, res) => {
 const getProfil = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, email, nom, prenom, role, raison_sociale, created_at FROM personnes WHERE id = $1',
+      'SELECT id, email, nom, prenom, typeCompte, raison_sociale, dateVerification FROM utilisateurs WHERE id = $1',
       [req.user.id]
     );
 

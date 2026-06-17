@@ -4,19 +4,19 @@ const pool = require('../config/db');
 // CRÉER UNE ANNONCE (Hôte)
 // ============================================
 const creerAnnonce = async (req, res) => {
-  const { titre, description, ville, quartier, adresse, prix, capacite } = req.body;
+  const { titre, description, ville, quartier, adresse, prixParNuit, capacite } = req.body;
   const hote_id = req.user.id;
 
-  if (!titre || !ville || !prix || !capacite) {
-    return res.status(400).json({ message: 'titre, ville, prix et capacite sont obligatoires' });
+  if (!titre || !ville || !prixParNuit || !capacite) {
+    return res.status(400).json({ message: 'titre, ville, prixParNuit et capacite sont obligatoires' });
   }
 
   try {
     const result = await pool.query(
-      `INSERT INTO annonces (hote_id, titre, description, ville, quartier, adresse, prix, capacite)
+      `INSERT INTO annonces (hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [hote_id, titre, description, ville, quartier, adresse, prix, capacite]
+      [hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite]
     );
 
     const annonce = result.rows[0];
@@ -56,10 +56,10 @@ const getAnnonces = async (req, res) => {
            COUNT(DISTINCT av.id) AS nb_avis,
            ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
     FROM annonces a
-    JOIN personnes p ON a.hote_id = p.id
-    LEFT JOIN avis av ON a.id = av.annonce_id
+    JOIN utilisateurs p ON a.hote_id = p.id
+    LEFT JOIN evaluations av ON a.id = av.annonce_id
     LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
-    WHERE a.disponible = true
+    WHERE a.statut = 'DISPONIBLE'
   `;
 
   const params = [];
@@ -74,27 +74,27 @@ const getAnnonces = async (req, res) => {
     params.push(parseInt(capacite));
   }
   if (prix_min) {
-    query += ` AND a.prix >= $${paramIndex++}`;
+    query += ` AND a.prixParNuit >= $${paramIndex++}`;
     params.push(parseFloat(prix_min));
   }
   if (prix_max) {
-    query += ` AND a.prix <= $${paramIndex++}`;
+    query += ` AND a.prixParNuit <= $${paramIndex++}`;
     params.push(parseFloat(prix_max));
   }
 
-  query += ` GROUP BY a.id, p.nom, p.prenom ORDER BY a.created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+  query += ` GROUP BY a.id, p.nom, p.prenom ORDER BY a.datePublication DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
   params.push(parseInt(limit), parseInt(offset));
 
   try {
     const result = await pool.query(query, params);
 
-    let countQuery = `SELECT COUNT(*) FROM annonces a WHERE a.disponible = true`;
+    let countQuery = `SELECT COUNT(*) FROM annonces a WHERE a.statut = 'DISPONIBLE'`;
     const countParams = [];
     let countIndex = 1;
     if (ville) { countQuery += ` AND LOWER(a.ville) LIKE LOWER($${countIndex++})`; countParams.push(`%${ville}%`); }
     if (capacite) { countQuery += ` AND a.capacite >= $${countIndex++}`; countParams.push(parseInt(capacite)); }
-    if (prix_min) { countQuery += ` AND a.prix >= $${countIndex++}`; countParams.push(parseFloat(prix_min)); }
-    if (prix_max) { countQuery += ` AND a.prix <= $${countIndex++}`; countParams.push(parseFloat(prix_max)); }
+    if (prix_min) { countQuery += ` AND a.prixParNuit >= $${countIndex++}`; countParams.push(parseFloat(prix_min)); }
+    if (prix_max) { countQuery += ` AND a.prixParNuit <= $${countIndex++}`; countParams.push(parseFloat(prix_max)); }
 
     const countResult = await pool.query(countQuery, countParams);
     const total = parseInt(countResult.rows[0].count);
@@ -127,8 +127,8 @@ const getAnnonceById = async (req, res) => {
               COUNT(DISTINCT av.id) AS nb_avis,
               ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
        FROM annonces a
-       JOIN personnes p ON a.hote_id = p.id
-       LEFT JOIN avis av ON a.id = av.annonce_id
+       JOIN utilisateurs p ON a.hote_id = p.id
+       LEFT JOIN evaluations av ON a.id = av.annonce_id
        LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
        WHERE a.id = $1
        GROUP BY a.id, p.nom, p.prenom, p.raison_sociale`,
@@ -157,15 +157,15 @@ const getMesAnnonces = async (req, res) => {
       `SELECT a.*,
               COALESCE(AVG(av.note), 0) AS note_moyenne,
               COUNT(DISTINCT av.id) AS nb_avis,
-              COUNT(DISTINCT r.id) AS nb_reservations,
+              COUNT(DISTINCT r.idReservation) AS nb_reservations,
               ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
        FROM annonces a
-       LEFT JOIN avis av ON a.id = av.annonce_id
+       LEFT JOIN evaluations av ON a.id = av.annonce_id
        LEFT JOIN reservations r ON a.id = r.annonce_id
        LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
        WHERE a.hote_id = $1
        GROUP BY a.id
-       ORDER BY a.created_at DESC`,
+       ORDER BY a.datePublication DESC`,
       [hote_id]
     );
 
@@ -204,17 +204,16 @@ const modifierAnnonce = async (req, res) => {
     const ville      = req.body.ville      !== undefined ? req.body.ville      : courante.ville;
     const quartier   = req.body.quartier   !== undefined ? req.body.quartier   : courante.quartier;
     const adresse    = req.body.adresse    !== undefined ? req.body.adresse    : courante.adresse;
-    const prix       = req.body.prix       !== undefined ? req.body.prix       : courante.prix;
+    const prixParNuit= req.body.prixParNuit!== undefined ? req.body.prixParNuit: courante.prixparnuit;
     const capacite   = req.body.capacite   !== undefined ? req.body.capacite   : courante.capacite;
-    const disponible = req.body.disponible !== undefined ? req.body.disponible : courante.disponible;
+    const statut     = req.body.statut     !== undefined ? req.body.statut     : courante.statut;
 
     await pool.query(
       `UPDATE annonces
        SET titre = $1, description = $2, ville = $3, quartier = $4,
-           adresse = $5, prix = $6, capacite = $7, disponible = $8,
-           updated_at = NOW()
+           adresse = $5, prixParNuit = $6, capacite = $7, statut = $8
        WHERE id = $9`,
-      [titre, description, ville, quartier, adresse, prix, capacite, disponible, id]
+      [titre, description, ville, quartier, adresse, prixParNuit, capacite, statut, id]
     );
 
     // Ajouter nouvelles images si fournies

@@ -7,16 +7,16 @@ const roleMiddleware = require('../middlewares/role.middleware');
 /**
  * @swagger
  * tags:
- *   name: Avis
- *   description: Avis et notes sur les chambres
+ *   name: Evaluations
+ *   description: Evaluations et notes sur les chambres
  */
 
 /**
  * @swagger
- * /avis:
+ * /evaluations:
  *   post:
  *     summary: Laisser un avis après une réservation terminée (Client)
- *     tags: [Avis]
+ *     tags: [Evaluations]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -47,10 +47,10 @@ router.post('/', authMiddleware, roleMiddleware('CLIENT'), laisserAvis);
 
 /**
  * @swagger
- * /avis/mes-avis:
+ * /evaluations/mes-avis:
  *   get:
  *     summary: Voir tous ses avis (Client)
- *     tags: [Avis]
+ *     tags: [Evaluations]
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -61,10 +61,10 @@ router.get('/mes-avis', authMiddleware, roleMiddleware('CLIENT'), getMesAvis);
 
 /**
  * @swagger
- * /avis/annonce/{annonce_id}:
+ * /evaluations/annonce/{annonce_id}:
  *   get:
  *     summary: Voir les avis d'une annonce (Public)
- *     tags: [Avis]
+ *     tags: [Evaluations]
  *     security: []
  *     parameters:
  *       - in: path

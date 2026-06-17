@@ -20,7 +20,7 @@ const laisserAvis = async (req, res) => {
     const reservation = await pool.query(
       `SELECT r.*, a.id AS annonce_id FROM reservations r
        JOIN annonces a ON r.annonce_id = a.id
-       WHERE r.id = $1 AND r.client_id = $2`,
+       WHERE r.idReservation = $1 AND r.client_id = $2`,
       [reservation_id, client_id]
     );
 
@@ -39,7 +39,7 @@ const laisserAvis = async (req, res) => {
 
     // Vérifier qu'un avis n'existe pas déjà pour cette réservation
     const avisExistant = await pool.query(
-      'SELECT id FROM avis WHERE reservation_id = $1',
+      'SELECT id FROM evaluations WHERE reservation_id = $1',
       [reservation_id]
     );
     if (avisExistant.rows.length > 0) {
@@ -47,7 +47,7 @@ const laisserAvis = async (req, res) => {
     }
 
     const result = await pool.query(
-      `INSERT INTO avis (client_id, annonce_id, reservation_id, note, commentaire)
+      `INSERT INTO evaluations (client_id, annonce_id, reservation_id, note, commentaire)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
       [client_id, resa.annonce_id, reservation_id, note, commentaire || null]
@@ -72,10 +72,10 @@ const getAvisAnnonce = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT av.*, p.nom AS client_nom, p.prenom AS client_prenom
-       FROM avis av
-       JOIN personnes p ON av.client_id = p.id
+       FROM evaluations av
+       JOIN utilisateurs p ON av.client_id = p.id
        WHERE av.annonce_id = $1
-       ORDER BY av.date_avis DESC`,
+       ORDER BY av.dateEvaluation DESC`,
       [annonce_id]
     );
 
@@ -104,10 +104,10 @@ const getMesAvis = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT av.*, a.titre AS annonce_titre, a.ville
-       FROM avis av
+       FROM evaluations av
        JOIN annonces a ON av.annonce_id = a.id
        WHERE av.client_id = $1
-       ORDER BY av.date_avis DESC`,
+       ORDER BY av.dateEvaluation DESC`,
       [client_id]
     );
 

@@ -20,11 +20,11 @@ const effectuerPaiement = async (req, res) => {
   try {
     // Vérifier que la réservation appartient au client et est EN_ATTENTE
     const reservation = await pool.query(
-      `SELECT r.*, a.prix, a.hote_id,
-              (EXTRACT(DAY FROM r.date_fin::timestamp - r.date_debut::timestamp)) AS nb_nuits
+      `SELECT r.*, a.prixParNuit, a.hote_id,
+              (EXTRACT(DAY FROM r.dateFin::timestamp - r.dateDebut::timestamp)) AS nb_nuits
        FROM reservations r
        JOIN annonces a ON r.annonce_id = a.id
-       WHERE r.id = $1 AND r.client_id = $2`,
+       WHERE r.idReservation = $1 AND r.client_id = $2`,
       [reservation_id, client_id]
     );
 
@@ -57,7 +57,7 @@ const effectuerPaiement = async (req, res) => {
 
     // Calculer montant
     const nbNuits = Math.max(1, parseInt(resa.nb_nuits));
-    const montant = nbNuits * parseFloat(resa.prix);
+    const montant = parseFloat(resa.montanttotal);
 
     // Enregistrer le paiement
     const paiement = await pool.query(
@@ -69,8 +69,8 @@ const effectuerPaiement = async (req, res) => {
 
     // Confirmer automatiquement la réservation via le paiement
     await pool.query(
-      `UPDATE reservations SET statut = 'CONFIRMEE', updated_at = NOW()
-       WHERE id = $1`,
+      `UPDATE reservations SET statut = 'CONFIRMEE'
+       WHERE idReservation = $1`,
       [reservation_id]
     );
 
@@ -89,8 +89,8 @@ const effectuerPaiement = async (req, res) => {
       paiement: paiement.rows[0],
       details: {
         nb_nuits: nbNuits,
-        prix_par_nuit: resa.prix,
-        montant_total: montant,
+        prixParNuit: resa.prixparnuit,
+        montantTotal: montant,
       },
     });
   } catch (err) {
@@ -108,10 +108,10 @@ const getPaiement = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT p.*, r.date_debut, r.date_fin, r.statut AS statut_reservation,
-              a.titre AS annonce_titre, a.prix AS prix_nuit
+      `SELECT p.*, r.dateDebut, r.dateFin, r.statut AS statut_reservation,
+              a.titre AS annonce_titre, a.prixParNuit AS prix_nuit
        FROM paiements p
-       JOIN reservations r ON p.reservation_id = r.id
+       JOIN reservations r ON p.reservation_id = r.idReservation
        JOIN annonces a ON r.annonce_id = a.id
        WHERE p.reservation_id = $1
        AND (r.client_id = $2 OR a.hote_id = $2)`,
