@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { marquerReservationsTerminees } = require('./reservation.controller');
 
 // ============================================
 // LAISSER UN AVIS (Client — après réservation terminée)
@@ -16,6 +17,9 @@ const laisserAvis = async (req, res) => {
   }
 
   try {
+    // Mettre à jour les statuts (réservations passées → TERMINEE) avant vérification
+    await marquerReservationsTerminees();
+
     // Vérifier que la réservation appartient au client
     const reservation = await pool.query(
       `SELECT r.*, a.id AS annonce_id FROM reservations r

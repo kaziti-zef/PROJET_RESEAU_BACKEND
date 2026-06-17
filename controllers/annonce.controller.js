@@ -11,6 +11,14 @@ const creerAnnonce = async (req, res) => {
     return res.status(400).json({ message: 'titre, ville, prixParNuit et capacite sont obligatoires' });
   }
 
+  if (Number(prixParNuit) <= 0) {
+    return res.status(400).json({ message: 'Le prix par nuit doit être supérieur à 0' });
+  }
+
+  if (Number(capacite) < 1) {
+    return res.status(400).json({ message: 'La capacité doit être au moins 1' });
+  }
+
   try {
     const result = await pool.query(
       `INSERT INTO annonces (hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite)
@@ -253,6 +261,20 @@ const supprimerAnnonce = async (req, res) => {
     );
     if (check.rows.length === 0) {
       return res.status(403).json({ message: 'Annonce introuvable ou non autorisé' });
+    }
+
+    // RG8 : une annonce possédant des réservations futures non annulées ne peut pas être supprimée
+    const futures = await pool.query(
+      `SELECT COUNT(*) FROM reservations
+       WHERE annonce_id = $1
+       AND statut NOT IN ('ANNULEE', 'REFUSEE', 'TERMINEE')
+       AND dateFin >= CURRENT_DATE`,
+      [id]
+    );
+    if (parseInt(futures.rows[0].count) > 0) {
+      return res.status(409).json({
+        message: 'Impossible de supprimer : cette annonce possède des réservations en cours ou à venir',
+      });
     }
 
     await pool.query('DELETE FROM annonces WHERE id = $1', [id]);

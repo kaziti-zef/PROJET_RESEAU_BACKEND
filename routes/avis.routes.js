@@ -12,7 +12,7 @@ const roleMiddleware = require('../middlewares/role.middleware');
  */
 
 /**
- * @swagger
+ * @swagger 
  * /evaluations:
  *   post:
  *     summary: Laisser un avis après une réservation terminée (Client)
@@ -20,7 +20,7 @@ const roleMiddleware = require('../middlewares/role.middleware');
  *     security:
  *       - bearerAuth: []
  *     requestBody:
- *       required: true
+ *       required: true 
  *       content:
  *         application/json:
  *           schema:

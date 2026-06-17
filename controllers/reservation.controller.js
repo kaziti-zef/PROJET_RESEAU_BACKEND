@@ -1,6 +1,18 @@
 const pool = require('../config/db');
 
 // ============================================
+// HELPER — Transition automatique CONFIRMEE → TERMINEE
+// Une réservation payée dont la date de fin est passée devient TERMINEE.
+// Indispensable pour autoriser le dépôt d'avis (RG15).
+// ============================================
+const marquerReservationsTerminees = async () => {
+  await pool.query(
+    `UPDATE reservations SET statut = 'TERMINEE'
+     WHERE statut = 'CONFIRMEE' AND dateFin < CURRENT_DATE`
+  );
+};
+
+// ============================================
 // CRÉER UNE RÉSERVATION (Client)
 // ============================================
 const creerReservation = async (req, res) => {
@@ -13,6 +25,16 @@ const creerReservation = async (req, res) => {
 
   if (new Date(dateFin) <= new Date(dateDebut)) {
     return res.status(400).json({ message: 'La date de fin doit être après la date de début' });
+  }
+
+  if (Number(nombrePersonnes) < 1) {
+    return res.status(400).json({ message: 'Le nombre de personnes doit être au moins 1' });
+  }
+
+  const aujourdhui = new Date();
+  aujourdhui.setHours(0, 0, 0, 0);
+  if (new Date(dateDebut) < aujourdhui) {
+    return res.status(400).json({ message: "La date d'arrivée ne peut pas être dans le passé" });
   }
 
   try {
@@ -85,6 +107,7 @@ const getMesReservations = async (req, res) => {
   const client_id = req.user.id;
 
   try {
+    await marquerReservationsTerminees();
     const result = await pool.query(
       `SELECT r.*,
               a.titre AS annonce_titre, a.ville, a.quartier, a.prixParNuit,
@@ -192,6 +215,7 @@ const getReservationsHote = async (req, res) => {
   const hote_id = req.user.id;
 
   try {
+    await marquerReservationsTerminees();
     const result = await pool.query(
       `SELECT r.*,
               a.titre AS annonce_titre, a.ville, a.prixParNuit,
@@ -270,10 +294,11 @@ const refuserReservation = async (req, res) => {
 const annulerReservation = async (req, res) => {
   const { id } = req.params;
   const user = req.user;
+  const role = user.role || user.typeCompte;
 
   try {
     let check;
-    if (user.typeCompte === 'CLIENT') {
+    if (role === 'CLIENT') {
       check = await pool.query(
         'SELECT * FROM reservations WHERE idReservation = $1 AND client_id = $2',
         [id, user.id]
@@ -306,7 +331,7 @@ const annulerReservation = async (req, res) => {
     // Notifier l'autre partie
     const io = req.app.get('io');
     if (io) {
-      if (user.typeCompte === 'CLIENT') {
+      if (role === 'CLIENT') {
         // Récupérer hote_id via l'annonce
         const annonceInfo = await pool.query(
           'SELECT hote_id FROM annonces WHERE id = $1', [resa.annonce_id]
@@ -342,4 +367,5 @@ module.exports = {
   getReservationsHote,
   refuserReservation,
   annulerReservation,
+  marquerReservationsTerminees,
 };

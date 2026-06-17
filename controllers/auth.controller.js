@@ -12,6 +12,15 @@ const inscription = async (req, res) => {
     return res.status(400).json({ message: 'Tous les champs obligatoires doivent être remplis' });
   }
 
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Adresse email invalide' });
+  }
+
+  if (String(motDePasse).length < 6) {
+    return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caractères' });
+  }
+
   if (!['CLIENT', 'HOTE'].includes(typeCompte)) {
     return res.status(400).json({ message: 'Rôle invalide. Choisir CLIENT ou HOTE' });
   }
@@ -39,7 +48,7 @@ const inscription = async (req, res) => {
     const utilisateur = result.rows[0];
 
     const token = jwt.sign(
-      { id: utilisateur.id, email: utilisateur.email, typeCompte: utilisateur.typecompte },
+      { id: utilisateur.id, email: utilisateur.email, role: utilisateur.typecompte, typeCompte: utilisateur.typecompte },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
@@ -81,7 +90,7 @@ const connexion = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: utilisateur.id, email: utilisateur.email, typeCompte: utilisateur.typecompte },
+      { id: utilisateur.id, email: utilisateur.email, role: utilisateur.typecompte, typeCompte: utilisateur.typecompte },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN }
     );
