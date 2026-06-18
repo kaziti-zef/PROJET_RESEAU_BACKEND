@@ -13,6 +13,8 @@ const avisRoutes = require('./routes/avis.routes');
 const utilisateurRoutes = require('./routes/utilisateur.routes');
 const adminAnnonceRoutes = require('./routes/adminAnnonce.routes');
 const superAdminRoutes = require('./routes/superAdmin.routes');
+const equipementRoutes = require('./routes/equipement.routes');
+const hoteRoutes = require('./routes/hote.routes');
 
 const app = express();
 
@@ -45,6 +47,8 @@ app.use('/api/evaluations', avisRoutes);
 app.use('/api/utilisateurs', utilisateurRoutes);
 app.use('/api/admin', adminAnnonceRoutes);
 app.use('/api/admin', superAdminRoutes);
+app.use('/api/equipements', equipementRoutes);
+app.use('/api/hote', hoteRoutes);
 
 // Route de santé
 app.get('/api/health', (req, res) => {

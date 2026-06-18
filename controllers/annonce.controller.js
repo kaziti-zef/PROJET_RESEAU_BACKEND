@@ -1,10 +1,54 @@
 const pool = require('../config/db');
 
 // ============================================
+// HELPER — normalise la liste d'équipements reçue (R1)
+// Accepte : tableau de codes, chaîne JSON "[...]", ou "a,b,c".
+// ============================================
+const parseEquipements = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map((c) => String(c).trim()).filter(Boolean);
+  const s = String(raw).trim();
+  if (!s) return [];
+  try {
+    const arr = JSON.parse(s);
+    if (Array.isArray(arr)) return arr.map((c) => String(c).trim()).filter(Boolean);
+  } catch { /* pas du JSON, on tente le split */ }
+  return s.split(',').map((c) => c.trim()).filter(Boolean);
+};
+
+// Lie une annonce à des équipements (par leur code), en remplaçant les liens existants.
+const lierEquipements = async (annonceId, codes, remplacer = false) => {
+  if (remplacer) {
+    await pool.query('DELETE FROM annonce_equipements WHERE annonce_id = $1', [annonceId]);
+  }
+  if (!codes || codes.length === 0) return;
+  await pool.query(
+    `INSERT INTO annonce_equipements (annonce_id, equipement_id)
+     SELECT $1, e.id FROM equipements e WHERE e.code = ANY($2::varchar[])
+     ON CONFLICT DO NOTHING`,
+    [annonceId, codes]
+  );
+};
+
+// Valide une période [debut, fin] optionnelle. Retourne un message d'erreur ou null.
+const validerPeriode = (debut, fin) => {
+  if ((debut && !fin) || (!debut && fin)) {
+    return 'La période de validité doit comporter une date de début ET une date de fin';
+  }
+  if (debut && fin && new Date(fin) < new Date(debut)) {
+    return 'La date de fin de validité doit être postérieure à la date de début';
+  }
+  return null;
+};
+
+// ============================================
 // CRÉER UNE ANNONCE (Hôte)
 // ============================================
 const creerAnnonce = async (req, res) => {
-  const { titre, description, ville, quartier, adresse, prixParNuit, capacite } = req.body;
+  const {
+    titre, description, ville, quartier, adresse, prixParNuit, capacite,
+    superficie, date_debut_validite, date_fin_validite,
+  } = req.body;
   const hote_id = req.user.id;
 
   if (!titre || !ville || !prixParNuit || !capacite) {
@@ -19,15 +63,28 @@ const creerAnnonce = async (req, res) => {
     return res.status(400).json({ message: 'La capacité doit être au moins 1' });
   }
 
+  const erreurPeriode = validerPeriode(date_debut_validite, date_fin_validite);
+  if (erreurPeriode) {
+    return res.status(400).json({ message: erreurPeriode });
+  }
+
   try {
     const result = await pool.query(
-      `INSERT INTO annonces (hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO annonces
+         (hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite,
+          superficie, date_debut_validite, date_fin_validite)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
-      [hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite]
+      [
+        hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite,
+        superficie || null, date_debut_validite || null, date_fin_validite || null,
+      ]
     );
 
     const annonce = result.rows[0];
+
+    // Équipements sélectionnés (R1)
+    await lierEquipements(annonce.id, parseEquipements(req.body.equipements));
 
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
@@ -62,11 +119,14 @@ const getAnnonces = async (req, res) => {
     SELECT a.*, p.nom AS hote_nom, p.prenom AS hote_prenom,
            COALESCE(AVG(av.note), 0) AS note_moyenne,
            COUNT(DISTINCT av.id) AS nb_avis,
-           ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
+           ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images,
+           ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements
     FROM annonces a
     JOIN utilisateurs p ON a.hote_id = p.id
     LEFT JOIN evaluations av ON a.id = av.annonce_id
     LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
+    LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
+    LEFT JOIN equipements e ON ae.equipement_id = e.id
     WHERE a.statut = 'DISPONIBLE'
   `;
 
@@ -137,11 +197,14 @@ const getAnnonceById = async (req, res) => {
       `SELECT a.*, p.nom AS hote_nom, p.prenom AS hote_prenom,
               COALESCE(AVG(av.note), 0) AS note_moyenne,
               COUNT(DISTINCT av.id) AS nb_avis,
-              ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
+              ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images,
+              ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements
        FROM annonces a
        JOIN utilisateurs p ON a.hote_id = p.id
        LEFT JOIN evaluations av ON a.id = av.annonce_id
        LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
+       LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
+       LEFT JOIN equipements e ON ae.equipement_id = e.id
        WHERE a.id = $1
        GROUP BY a.id, p.nom, p.prenom`,
       [id]
@@ -243,14 +306,31 @@ const modifierAnnonce = async (req, res) => {
     const prixParNuit= req.body.prixParNuit!== undefined ? req.body.prixParNuit: courante.prixparnuit;
     const capacite   = req.body.capacite   !== undefined ? req.body.capacite   : courante.capacite;
     const statut     = req.body.statut     !== undefined ? req.body.statut     : courante.statut;
+    const superficie = req.body.superficie !== undefined ? (req.body.superficie || null) : courante.superficie;
+    const dateDebutValidite = req.body.date_debut_validite !== undefined
+      ? (req.body.date_debut_validite || null) : courante.date_debut_validite;
+    const dateFinValidite = req.body.date_fin_validite !== undefined
+      ? (req.body.date_fin_validite || null) : courante.date_fin_validite;
+
+    const erreurPeriode = validerPeriode(dateDebutValidite, dateFinValidite);
+    if (erreurPeriode) {
+      return res.status(400).json({ message: erreurPeriode });
+    }
 
     await pool.query(
       `UPDATE annonces
        SET titre = $1, description = $2, ville = $3, quartier = $4,
-           adresse = $5, prixParNuit = $6, capacite = $7, statut = $8
-       WHERE id = $9`,
-      [titre, description, ville, quartier, adresse, prixParNuit, capacite, statut, id]
+           adresse = $5, prixParNuit = $6, capacite = $7, statut = $8,
+           superficie = $9, date_debut_validite = $10, date_fin_validite = $11
+       WHERE id = $12`,
+      [titre, description, ville, quartier, adresse, prixParNuit, capacite, statut,
+       superficie, dateDebutValidite, dateFinValidite, id]
     );
+
+    // Mise à jour des équipements si le champ est fourni (R1)
+    if (req.body.equipements !== undefined) {
+      await lierEquipements(id, parseEquipements(req.body.equipements), true);
+    }
 
     // Ajouter nouvelles images si fournies
     if (req.files && req.files.length > 0) {
@@ -347,9 +427,13 @@ const supprimerImage = async (req, res) => {
 // ============================================
 const getAnnonceAvecImages = async (id) => {
   const result = await pool.query(
-    `SELECT a.*, ARRAY_AGG(ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
+    `SELECT a.*,
+            ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images,
+            ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements
      FROM annonces a
      LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
+     LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
+     LEFT JOIN equipements e ON ae.equipement_id = e.id
      WHERE a.id = $1
      GROUP BY a.id`,
     [id]

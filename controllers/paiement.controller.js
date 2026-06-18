@@ -57,14 +57,25 @@ const effectuerPaiement = async (req, res) => {
 
     // Calculer montant
     const nbNuits = Math.max(1, parseInt(resa.nb_nuits));
-    const montant = parseFloat(resa.montanttotal);
+    const montantDu = parseFloat(resa.montanttotal);
+
+    // Paiement partiel (K1) : le client peut payer un acompte de 50%
+    const partiel = req.body.paiement_partiel === true || req.body.paiement_partiel === 'true';
+    const montant = partiel ? Math.round(montantDu * 0.5 * 100) / 100 : montantDu;
+    const statutPaiement = partiel ? 'PARTIEL' : 'COMPLET';
+
+    // Finance plateforme (O1) : commission prélevée sur le montant payé
+    const tauxCommission = parseFloat(process.env.COMMISSION_PLATEFORME || '10') / 100;
+    const commission = Math.round(montant * tauxCommission * 100) / 100;
+    const montantHote = Math.round((montant - commission) * 100) / 100;
 
     // Enregistrer le paiement
     const paiement = await pool.query(
-      `INSERT INTO paiements (reservation_id, montant, mode_paiement)
-       VALUES ($1, $2, $3)
+      `INSERT INTO paiements
+         (reservation_id, montant, mode_paiement, statut_paiement, montant_du, commission_plateforme, montant_hote)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [reservation_id, montant, mode_paiement]
+      [reservation_id, montant, mode_paiement, statutPaiement, montantDu, commission, montantHote]
     );
 
     // Confirmer automatiquement la réservation via le paiement
@@ -85,12 +96,19 @@ const effectuerPaiement = async (req, res) => {
     }
 
     return res.status(201).json({
-      message: 'Paiement effectué. Réservation confirmée automatiquement.',
+      message: partiel
+        ? 'Acompte de 50% payé. Réservation confirmée. Le solde restera dû à l\'arrivée.'
+        : 'Paiement effectué. Réservation confirmée automatiquement.',
       paiement: paiement.rows[0],
       details: {
         nb_nuits: nbNuits,
         prixParNuit: resa.prixparnuit,
-        montantTotal: montant,
+        montant_du: montantDu,
+        montant_paye: montant,
+        statut_paiement: statutPaiement,
+        reste_a_payer: Math.round((montantDu - montant) * 100) / 100,
+        commission_plateforme: commission,
+        montant_hote: montantHote,
       },
     });
   } catch (err) {

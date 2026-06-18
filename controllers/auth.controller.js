@@ -101,6 +101,8 @@ const connexion = async (req, res) => {
         nom: utilisateur.nom,
         prenom: utilisateur.prenom,
         typeCompte: utilisateur.typecompte,
+        statut_verification: utilisateur.statut_verification,
+        est_super_admin: utilisateur.est_super_admin,
       },
     });
   } catch (err) {
@@ -115,7 +117,7 @@ const connexion = async (req, res) => {
 const getProfil = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, email, nom, prenom, typeCompte, dateVerification FROM utilisateurs WHERE id = $1',
+      'SELECT id, email, nom, prenom, typeCompte, dateVerification, statut_verification, est_super_admin FROM utilisateurs WHERE id = $1',
       [req.user.id]
     );
 

@@ -56,6 +56,19 @@ const creerReservation = async (req, res) => {
       return res.status(400).json({ message: 'Vous ne pouvez pas réserver votre propre chambre' });
     }
 
+    // Période de validité de l'annonce (I2) : on ne peut pas réserver hors de l'intervalle défini
+    const { date_debut_validite, date_fin_validite } = annonce.rows[0];
+    if (date_debut_validite && new Date(dateDebut) < new Date(date_debut_validite)) {
+      return res.status(400).json({
+        message: `Cette annonce n'est réservable qu'à partir du ${new Date(date_debut_validite).toLocaleDateString('fr-FR')}`,
+      });
+    }
+    if (date_fin_validite && new Date(dateFin) > new Date(date_fin_validite)) {
+      return res.status(400).json({
+        message: `Cette annonce n'est réservable que jusqu'au ${new Date(date_fin_validite).toLocaleDateString('fr-FR')}`,
+      });
+    }
+
     // Conflit de dates — exclure annulées et refusées
     const conflit = await pool.query(
       `SELECT idReservation FROM reservations
@@ -166,10 +179,26 @@ const modifierReservation = async (req, res) => {
     }
 
     // Vérifier capacité
-    const annonce = await pool.query('SELECT capacite, prixParNuit FROM annonces WHERE id = $1', [resa.annonce_id]);
+    const annonce = await pool.query(
+      'SELECT capacite, prixParNuit, date_debut_validite, date_fin_validite FROM annonces WHERE id = $1',
+      [resa.annonce_id]
+    );
     if (nombrePersonnes > annonce.rows[0].capacite) {
       return res.status(400).json({
         message: `La chambre accepte maximum ${annonce.rows[0].capacite} personne(s)`,
+      });
+    }
+
+    // Période de validité (I2)
+    const { date_debut_validite, date_fin_validite } = annonce.rows[0];
+    if (date_debut_validite && new Date(dateDebut) < new Date(date_debut_validite)) {
+      return res.status(400).json({
+        message: `Cette annonce n'est réservable qu'à partir du ${new Date(date_debut_validite).toLocaleDateString('fr-FR')}`,
+      });
+    }
+    if (date_fin_validite && new Date(dateFin) > new Date(date_fin_validite)) {
+      return res.status(400).json({
+        message: `Cette annonce n'est réservable que jusqu'au ${new Date(date_fin_validite).toLocaleDateString('fr-FR')}`,
       });
     }
 
@@ -219,10 +248,12 @@ const getReservationsHote = async (req, res) => {
     const result = await pool.query(
       `SELECT r.*,
               a.titre AS annonce_titre, a.ville, a.prixParNuit,
-              p.nom AS client_nom, p.prenom AS client_prenom, p.email AS client_email
+              p.nom AS client_nom, p.prenom AS client_prenom, p.email AS client_email,
+              pa.montant AS montant_paye, pa.statut_paiement, pa.montant_hote
        FROM reservations r
        JOIN annonces a ON r.annonce_id = a.id
        JOIN utilisateurs p ON r.client_id = p.id
+       LEFT JOIN paiements pa ON pa.reservation_id = r.idReservation
        WHERE a.hote_id = $1
        ORDER BY r.idReservation DESC`,
       [hote_id]
