@@ -34,11 +34,28 @@ const laisserAvis = async (req, res) => {
 
     const resa = reservation.rows[0];
 
-    // Vérifier que la réservation est terminée
-    if (resa.statut !== 'TERMINEE') {
+    // Vérifier que le séjour a réellement eu lieu (ou est en cours) :
+    // - TERMINEE : toujours autorisé (le séjour est passé)
+    // - CONFIRMEE : autorisé seulement si au moins 50% de la durée du séjour est écoulée
+    // - EN_ATTENTE / ANNULEE / REFUSEE : jamais autorisé
+    if (resa.statut !== 'TERMINEE' && resa.statut !== 'CONFIRMEE') {
       return res.status(400).json({
-        message: 'Vous ne pouvez laisser un avis qu\'après une réservation terminée',
+        message: 'Vous ne pouvez laisser un avis que pour une réservation confirmée ou terminée',
       });
+    }
+
+    if (resa.statut === 'CONFIRMEE') {
+      const dateDebut = new Date(resa.datedebut);
+      const dateFin = new Date(resa.datefin);
+      const dureeMs = dateFin.getTime() - dateDebut.getTime();
+      const dateMiDuree = new Date(dateDebut.getTime() + dureeMs / 2);
+
+      if (new Date() < dateMiDuree) {
+        return res.status(400).json({
+          message: 'Vous pourrez laisser un avis à partir de la moitié de la durée de votre séjour',
+          date_a_partir_de: dateMiDuree.toISOString(),
+        });
+      }
     }
 
     // Vérifier qu'un avis n'existe pas déjà pour cette réservation
@@ -122,4 +139,65 @@ const getMesAvis = async (req, res) => {
   }
 };
 
-module.exports = { laisserAvis, getAvisAnnonce, getMesAvis };
+// ============================================
+// PEUT-ON NOTER CETTE RÉSERVATION ? (Client)
+// Expose la même règle que laisserAvis, sans créer l'avis :
+// permet au frontend d'afficher ou non le formulaire de notation.
+// ============================================
+const peutNoter = async (req, res) => {
+  const { id } = req.params; // id de la réservation
+  const client_id = req.user.id;
+
+  try {
+    await marquerReservationsTerminees();
+
+    const reservation = await pool.query(
+      `SELECT r.*, a.id AS annonce_id FROM reservations r
+       JOIN annonces a ON r.annonce_id = a.id
+       WHERE r.idReservation = $1 AND r.client_id = $2`,
+      [id, client_id]
+    );
+
+    if (reservation.rows.length === 0) {
+      return res.status(404).json({ message: 'Réservation introuvable', peut_noter: false });
+    }
+
+    const resa = reservation.rows[0];
+
+    const avisExistant = await pool.query(
+      'SELECT id FROM evaluations WHERE reservation_id = $1',
+      [id]
+    );
+    if (avisExistant.rows.length > 0) {
+      return res.status(200).json({ peut_noter: false, raison: 'AVIS_DEJA_LAISSE' });
+    }
+
+    if (resa.statut === 'TERMINEE') {
+      return res.status(200).json({ peut_noter: true });
+    }
+
+    if (resa.statut !== 'CONFIRMEE') {
+      return res.status(200).json({ peut_noter: false, raison: 'RESERVATION_NON_CONFIRMEE' });
+    }
+
+    const dateDebut = new Date(resa.datedebut);
+    const dateFin = new Date(resa.datefin);
+    const dureeMs = dateFin.getTime() - dateDebut.getTime();
+    const dateMiDuree = new Date(dateDebut.getTime() + dureeMs / 2);
+
+    if (new Date() < dateMiDuree) {
+      return res.status(200).json({
+        peut_noter: false,
+        raison: 'MI_DUREE_NON_ATTEINTE',
+        date_a_partir_de: dateMiDuree.toISOString(),
+      });
+    }
+
+    return res.status(200).json({ peut_noter: true });
+  } catch (err) {
+    console.error('Erreur peutNoter:', err);
+    return res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
+
+module.exports = { laisserAvis, getAvisAnnonce, getMesAvis, peutNoter };

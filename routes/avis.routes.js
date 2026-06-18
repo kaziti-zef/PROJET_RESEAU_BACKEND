@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { laisserAvis, getAvisAnnonce, getMesAvis } = require('../controllers/avis.controller');
+const { laisserAvis, getAvisAnnonce, getMesAvis, peutNoter } = require('../controllers/avis.controller');
 const authMiddleware = require('../middlewares/auth.middleware');
 const roleMiddleware = require('../middlewares/role.middleware');
 
@@ -15,7 +15,7 @@ const roleMiddleware = require('../middlewares/role.middleware');
  * @swagger 
  * /evaluations:
  *   post:
- *     summary: Laisser un avis après une réservation terminée (Client)
+ *     summary: Laisser un avis (Client) — réservation TERMINEE, ou CONFIRMEE à partir de 50% de la durée du séjour
  *     tags: [Evaluations]
  *     security:
  *       - bearerAuth: []
@@ -39,11 +39,33 @@ const roleMiddleware = require('../middlewares/role.middleware');
  *       201:
  *         description: Avis publié
  *       400:
- *         description: Réservation non terminée
+ *         description: Réservation non éligible (non confirmée, ou mi-durée non atteinte)
  *       409:
  *         description: Avis déjà posté pour cette réservation
  */
 router.post('/', authMiddleware, roleMiddleware('CLIENT'), laisserAvis);
+
+/**
+ * @swagger
+ * /evaluations/peut-noter/{reservation_id}:
+ *   get:
+ *     summary: Indique si le client peut laisser un avis pour cette réservation (Client)
+ *     tags: [Evaluations]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: reservation_id
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: "{ peut_noter: boolean, raison?, date_a_partir_de? }"
+ *       404:
+ *         description: Réservation introuvable
+ */
+router.get('/peut-noter/:id', authMiddleware, roleMiddleware('CLIENT'), peutNoter);
 
 /**
  * @swagger
