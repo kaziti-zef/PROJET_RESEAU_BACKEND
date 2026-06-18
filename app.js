@@ -10,6 +10,9 @@ const annonceRoutes = require('./routes/annonce.routes');
 const reservationRoutes = require('./routes/reservation.routes');
 const paiementRoutes = require('./routes/paiement.routes');
 const avisRoutes = require('./routes/avis.routes');
+const utilisateurRoutes = require('./routes/utilisateur.routes');
+const adminAnnonceRoutes = require('./routes/adminAnnonce.routes');
+const superAdminRoutes = require('./routes/superAdmin.routes');
 
 const app = express();
 
@@ -20,7 +23,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Servir les images uploadées en statique
+// Servir les images uploadées en statique (annonces + CNI, sous-dossiers de /uploads)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ============================================
@@ -39,6 +42,9 @@ app.use('/api/annonces', annonceRoutes);
 app.use('/api/reservations', reservationRoutes);
 app.use('/api/paiements', paiementRoutes);
 app.use('/api/evaluations', avisRoutes);
+app.use('/api/utilisateurs', utilisateurRoutes);
+app.use('/api/admin', adminAnnonceRoutes);
+app.use('/api/admin', superAdminRoutes);
 
 // Route de santé
 app.get('/api/health', (req, res) => {
@@ -62,7 +68,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error('Erreur globale:', err.stack);
 
-  if (err.message && err.message.includes('images')) {
+  if (err.message && (err.message.includes('images') || err.message.includes('CNI'))) {
     return res.status(400).json({ message: err.message });
   }
 

@@ -41,6 +41,14 @@ const initDB = async () => {
       END $$;
     `);
 
+    // Statut de vérification de la demande "devenir hôte" (RG : approbation admin)
+    await pool.query(`
+      DO $$ BEGIN
+        CREATE TYPE typestatutverif_enum AS ENUM ('NON_DEMANDE', 'EN_ATTENTE', 'APPROUVE', 'REJETE');
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+
     // ── 1. UTILISATEURS ──────────────────────────────────
     await pool.query(`
       CREATE TABLE IF NOT EXISTS utilisateurs (
@@ -52,6 +60,24 @@ const initDB = async () => {
         typeCompte typecompte_enum NOT NULL,
         raison_sociale VARCHAR(255),
         dateVerification TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Colonnes ajoutées pour la demande "devenir hôte" (idempotent sur base existante)
+    await pool.query(`ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS telephone VARCHAR(30);`);
+    await pool.query(`ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS photo_cni VARCHAR(500);`);
+    await pool.query(`
+      ALTER TABLE utilisateurs
+      ADD COLUMN IF NOT EXISTS statut_verification typestatutverif_enum DEFAULT 'NON_DEMANDE';
+    `);
+
+    // ── 1bis. COMPTE PAIEMENT (un hôte peut avoir un compte de réception) ──
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS compte_paiement (
+        idComptePaiement SERIAL PRIMARY KEY,
+        utilisateur_id INT NOT NULL REFERENCES utilisateurs(id) ON DELETE CASCADE,
+        fournisseur VARCHAR(100) NOT NULL,
+        identifiant VARCHAR(255) NOT NULL
       );
     `);
 
@@ -127,6 +153,8 @@ const initDB = async () => {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_reservations_client ON reservations(client_id);`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_reservations_annonce ON reservations(annonce_id);`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_evaluations_annonce ON evaluations(annonce_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_compte_paiement_user ON compte_paiement(utilisateur_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_utilisateurs_statut_verif ON utilisateurs(statut_verification);`);
 
     console.log('✅ Tables créées / vérifiées avec succès');
   } catch (err) {
