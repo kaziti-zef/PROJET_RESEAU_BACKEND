@@ -55,7 +55,7 @@ const creerAnnonce = async (req, res) => {
 // LISTER TOUTES LES ANNONCES (Public)
 // ============================================
 const getAnnonces = async (req, res) => {
-  const { ville, capacite, prix_min, prix_max, page = 1, limit = 10 } = req.query;
+  const { ville, capacite, prix_min, prix_max, page = 1, limit = 10, tri } = req.query;
   const offset = (page - 1) * limit;
 
   let query = `
@@ -90,7 +90,11 @@ const getAnnonces = async (req, res) => {
     params.push(parseFloat(prix_max));
   }
 
-  query += ` GROUP BY a.id, p.nom, p.prenom ORDER BY a.datePublication DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
+  const orderBy = tri === 'populaire'
+    ? 'ORDER BY note_moyenne DESC, nb_avis DESC'
+    : 'ORDER BY a.datePublication DESC';
+
+  query += ` GROUP BY a.id, p.nom, p.prenom ${orderBy} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
   params.push(parseInt(limit), parseInt(offset));
 
   try {
@@ -180,6 +184,30 @@ const getMesAnnonces = async (req, res) => {
     return res.status(200).json(result.rows);
   } catch (err) {
     console.error('Erreur mes annonces:', err);
+    return res.status(500).json({ message: 'Erreur serveur' });
+  }
+};
+
+// ============================================
+// VILLES LES PLUS POPULAIRES (Public)
+// Classées par nombre d'hôtes distincts décroissant
+// ============================================
+const getVillesPopulaires = async (req, res) => {
+  const { limit = 10 } = req.query;
+
+  try {
+    const result = await pool.query(
+      `SELECT a.ville, COUNT(DISTINCT a.hote_id) AS nb_hotes, COUNT(a.id) AS nb_annonces
+       FROM annonces a
+       GROUP BY a.ville
+       ORDER BY nb_hotes DESC, nb_annonces DESC
+       LIMIT $1`,
+      [parseInt(limit)]
+    );
+
+    return res.status(200).json(result.rows);
+  } catch (err) {
+    console.error('Erreur villes populaires:', err);
     return res.status(500).json({ message: 'Erreur serveur' });
   }
 };
@@ -334,6 +362,7 @@ module.exports = {
   getAnnonces,
   getAnnonceById,
   getMesAnnonces,
+  getVillesPopulaires,
   modifierAnnonce,
   supprimerAnnonce,
   supprimerImage,

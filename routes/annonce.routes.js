@@ -5,6 +5,7 @@ const {
   getAnnonces,
   getAnnonceById,
   getMesAnnonces,
+  getVillesPopulaires,
   modifierAnnonce,
   supprimerAnnonce,
   supprimerImage,
@@ -54,11 +55,36 @@ const upload = require('../config/multer');
  *         schema:
  *           type: integer
  *           default: 10
+ *       - in: query
+ *         name: tri
+ *         schema:
+ *           type: string
+ *           enum: [populaire]
+ *         description: Si "populaire", tri par note moyenne décroissante (hébergements en vedette). Sinon tri par date de publication décroissante.
  *     responses:
  *       200:
  *         description: Liste des annonces avec pagination
  */
 router.get('/', getAnnonces);
+
+/**
+ * @swagger
+ * /annonces/villes-populaires:
+ *   get:
+ *     summary: Villes classées par nombre d'hôtes décroissant (destinations disponibles)
+ *     tags: [Annonces]
+ *     security: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *           default: 10
+ *     responses:
+ *       200:
+ *         description: Liste des villes avec leur nombre d'hôtes distincts
+ */
+router.get('/villes-populaires', getVillesPopulaires);
 
 /**
  * @swagger
