@@ -130,7 +130,7 @@ const getAnnonceById = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT a.*, p.nom AS hote_nom, p.prenom AS hote_prenom, p.raison_sociale,
+      `SELECT a.*, p.nom AS hote_nom, p.prenom AS hote_prenom,
               COALESCE(AVG(av.note), 0) AS note_moyenne,
               COUNT(DISTINCT av.id) AS nb_avis,
               ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
@@ -139,7 +139,7 @@ const getAnnonceById = async (req, res) => {
        LEFT JOIN evaluations av ON a.id = av.annonce_id
        LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
        WHERE a.id = $1
-       GROUP BY a.id, p.nom, p.prenom, p.raison_sociale`,
+       GROUP BY a.id, p.nom, p.prenom`,
       [id]
     );
 

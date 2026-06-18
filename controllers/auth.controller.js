@@ -6,7 +6,7 @@ const pool = require('../config/db');
 // INSCRIPTION
 // ============================================
 const inscription = async (req, res) => {
-  const { email, nom, prenom, motDePasse, typeCompte, raison_sociale } = req.body;
+  const { email, nom, prenom, motDePasse, typeCompte } = req.body;
 
   if (!email || !nom || !prenom || !motDePasse || !typeCompte) {
     return res.status(400).json({ message: 'Tous les champs obligatoires doivent être remplis' });
@@ -21,12 +21,8 @@ const inscription = async (req, res) => {
     return res.status(400).json({ message: 'Le mot de passe doit contenir au moins 6 caractères' });
   }
 
-  if (!['CLIENT', 'HOTE'].includes(typeCompte)) {
-    return res.status(400).json({ message: 'Rôle invalide. Choisir CLIENT ou HOTE' });
-  }
-
-  if (typeCompte === 'HOTE' && !raison_sociale) {
-    return res.status(400).json({ message: 'La raison sociale est obligatoire pour un hôte' });
+  if (typeCompte !== 'CLIENT') {
+    return res.status(400).json({ message: 'Rôle invalide. Seul CLIENT est autorisé à l\'inscription' });
   }
 
   try {
@@ -39,10 +35,10 @@ const inscription = async (req, res) => {
     const hashedPassword = await bcrypt.hash(motDePasse, 10);
 
     const result = await pool.query(
-      `INSERT INTO utilisateurs (email, nom, prenom, motDePasse, typeCompte, raison_sociale)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, email, nom, prenom, typeCompte, raison_sociale`,
-      [email, nom, prenom, hashedPassword, typeCompte, raison_sociale || null]
+      `INSERT INTO utilisateurs (email, nom, prenom, motDePasse, typeCompte)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, email, nom, prenom, typeCompte`,
+      [email, nom, prenom, hashedPassword, typeCompte]
     );
 
     const utilisateur = result.rows[0];
@@ -105,7 +101,6 @@ const connexion = async (req, res) => {
         nom: utilisateur.nom,
         prenom: utilisateur.prenom,
         typeCompte: utilisateur.typecompte,
-        raison_sociale: utilisateur.raison_sociale,
       },
     });
   } catch (err) {
@@ -120,7 +115,7 @@ const connexion = async (req, res) => {
 const getProfil = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, email, nom, prenom, typeCompte, raison_sociale, dateVerification FROM utilisateurs WHERE id = $1',
+      'SELECT id, email, nom, prenom, typeCompte, dateVerification FROM utilisateurs WHERE id = $1',
       [req.user.id]
     );
 

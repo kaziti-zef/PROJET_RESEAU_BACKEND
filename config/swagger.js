@@ -31,7 +31,6 @@ const options = {
             nom: { type: 'string' },
             prenom: { type: 'string' },
             role: { type: 'string', enum: ['CLIENT', 'HOTE'] },
-            raison_sociale: { type: 'string' },
           },
         },
         Annonce: {

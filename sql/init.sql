@@ -27,8 +27,7 @@ CREATE TABLE utilisateurs (
   prenom VARCHAR(100) NOT NULL,
   motDePasse VARCHAR(255) NOT NULL,
   typeCompte typecompte_enum NOT NULL,
-  dateVerification TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  raison_sociale VARCHAR(255)
+  dateVerification TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 2. Table ComptePaiement

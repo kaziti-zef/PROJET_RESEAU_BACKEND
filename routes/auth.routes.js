@@ -14,7 +14,7 @@ const authMiddleware = require('../middlewares/auth.middleware');
  * @swagger
  * /auth/inscription:
  *   post:
- *     summary: Créer un compte (Client ou Hôte)
+ *     summary: Créer un compte (Client)
  *     tags: [Auth]
  *     security: []
  *     requestBody:
@@ -35,10 +35,8 @@ const authMiddleware = require('../middlewares/auth.middleware');
  *                 type: string
  *               role:
  *                 type: string
- *                 enum: [CLIENT, HOTE]
- *               raison_sociale:
- *                 type: string
- *                 description: Obligatoire si role = HOTE
+ *                 enum: [CLIENT]
+ *                 description: Seul CLIENT est autorisé à l'inscription. Le passage à HOTE se fait par approbation admin.
  *     responses:
  *       201:
  *         description: Inscription réussie, token retourné

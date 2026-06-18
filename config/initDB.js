@@ -58,10 +58,12 @@ const initDB = async () => {
         prenom VARCHAR(100) NOT NULL,
         motDePasse VARCHAR(255) NOT NULL,
         typeCompte typecompte_enum NOT NULL,
-        raison_sociale VARCHAR(255),
         dateVerification TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // raison_sociale supprimée (E2) : plus de notion de raison sociale, idempotent sur base existante
+    await pool.query(`ALTER TABLE utilisateurs DROP COLUMN IF EXISTS raison_sociale;`);
 
     // Colonnes ajoutées pour la demande "devenir hôte" (idempotent sur base existante)
     await pool.query(`ALTER TABLE utilisateurs ADD COLUMN IF NOT EXISTS telephone VARCHAR(30);`);
