@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { inscription, connexion, getProfil } = require('../controllers/auth.controller');
+const { inscription, connexion, getProfil, changerMotDePasse } = require('../controllers/auth.controller');
 const authMiddleware = require('../middlewares/auth.middleware');
 
 /**
@@ -89,5 +89,37 @@ router.post('/connexion', connexion);
  *         description: Non authentifié
  */
 router.get('/profil', authMiddleware, getProfil);
+
+/**
+ * @swagger
+ * /auth/mot-de-passe:
+ *   put:
+ *     summary: Changer son mot de passe (utilisateur connecté)
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [ancienMotDePasse, nouveauMotDePasse]
+ *             properties:
+ *               ancienMotDePasse:
+ *                 type: string
+ *               nouveauMotDePasse:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Mot de passe modifié avec succès
+ *       400:
+ *         description: Données invalides
+ *       401:
+ *         description: Non authentifié ou ancien mot de passe incorrect
+ *       404:
+ *         description: Utilisateur introuvable
+ */
+router.put('/mot-de-passe', authMiddleware, changerMotDePasse);
 
 module.exports = router;
