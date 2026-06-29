@@ -35,19 +35,17 @@ const effectuerPaiement = async (req, res) => {
     );
 
     if (reservation.rows.length === 0) {
-      db.release();
       return res.status(404).json({ message: 'Réservation introuvable' });
     }
 
     const resa = reservation.rows[0];
 
-    if (resa.statut === 'REFUSEE') { db.release(); return res.status(400).json({ message: 'Cette réservation a été refusée par l\'hôte' }); }
-    if (resa.statut === 'ANNULEE') { db.release(); return res.status(400).json({ message: 'Cette réservation est annulée' }); }
-    if (resa.statut !== 'EN_ATTENTE') { db.release(); return res.status(400).json({ message: 'Cette réservation a déjà été payée' }); }
+    if (resa.statut === 'REFUSEE') { return res.status(400).json({ message: 'Cette réservation a été refusée par l\'hôte' }); }
+    if (resa.statut === 'ANNULEE') { return res.status(400).json({ message: 'Cette réservation est annulée' }); }
+    if (resa.statut !== 'EN_ATTENTE') { return res.status(400).json({ message: 'Cette réservation a déjà été payée' }); }
 
     const paiementExistant = await db.query('SELECT id FROM paiements WHERE reservation_id = $1', [reservation_id]);
     if (paiementExistant.rows.length > 0) {
-      db.release();
       return res.status(409).json({ message: 'Cette réservation a déjà été payée' });
     }
 
@@ -72,7 +70,6 @@ const effectuerPaiement = async (req, res) => {
         await wallet.debiter(client_id, montant, 'PAIEMENT', `Paiement réservation #${reservation_id}`, reservation_id, db, true);
       } catch (e) {
         await db.query('ROLLBACK');
-        db.release();
         if (e.code === 'SOLDE_INSUFFISANT') {
           return res.status(400).json({ message: 'Solde du porte-monnaie insuffisant pour ce paiement' });
         }

@@ -120,11 +120,9 @@ const initDB = async () => {
         ('chambre_double',      'Chambre double'),
         ('studio',              'Studio'),
         ('suite',               'Suite'),
-        ('appartement',         'Appartement'),
-        ('bungalow',            'Bungalow'),
-        ('villa',               'Villa'),
-        ('chambre_hote',        'Chambre chez l''habitant'),
-        ('dortoir',             'Dortoir')
+    
+        ('bungalow',            'Bungalow')
+
       ON CONFLICT (code) DO NOTHING;
     `);
 

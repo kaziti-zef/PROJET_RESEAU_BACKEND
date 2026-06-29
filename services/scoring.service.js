@@ -1,10 +1,10 @@
 // ============================================================
 //  services/scoring.service.js
-//  IMPLÉMENTATION DU MODÈLE MATHÉMATIQUE (PLNE) — Option A
+//  IMPLÉMENTATION DU MODÈLE MATHÉMATIQUE 
 //  « Moteur de compatibilité locataire ↔ chambre »
 //
-//  Le cahier de charge définit un Programme Linéaire en Nombres
-//  Entiers (PLNE, §3.4) qui MAXIMISE le surplus social global :
+//  La recherche est basée sur un Programme Linéaire en Nombres
+//  Entiers  qui MAXIMISE le surplus social global :
 //
 //    max  Σ_c Σ_l  [ γ·P_cl
 //                   + α1·(B_l − P_cl)
