@@ -1,10 +1,15 @@
+const fs = require('fs');
 const pool = require('../config/db');
+const { verifierCNI } = require('../services/cniVerification');
 
 // ============================================
 // DEMANDE "DEVENIR HÔTE" (Client connecté)
 // Le client reste CLIENT tant que l'admin n'a pas approuvé.
-// Champs requis : téléphone, photo CNI (simulée via upload),
-// fournisseur + identifiant du compte de paiement.
+// Champs requis : téléphone, photo CNI, fournisseur + identifiant
+// du compte de paiement.
+// La photo CNI passe d'abord par une VÉRIFICATION (C8) : si elle
+// n'est pas reconnue comme pièce d'identité valide, la demande est
+// rejetée immédiatement, avant tout examen par un administrateur.
 // ============================================
 const demanderDevenirHote = async (req, res) => {
   const client_id = req.user.id;
@@ -38,6 +43,17 @@ const demanderDevenirHote = async (req, res) => {
       return res.status(409).json({ message: 'Une demande est déjà en attente de validation' });
     }
 
+    // ── Vérification automatique de la CNI (C8) ──────────
+    const verif = await verifierCNI(req.file.path, req.file.originalname);
+    if (!verif.valide) {
+      // On supprime le fichier rejeté pour ne pas encombrer le serveur
+      fs.unlink(req.file.path, () => {});
+      return res.status(422).json({
+        message: `Pièce d'identité refusée : ${verif.raison || 'document non valide'}. Votre demande n'a pas été transmise. Réessayez avec une photo nette et lisible de votre CNI.`,
+        cni_valide: false,
+      });
+    }
+
     const photoCniUrl = `${process.env.UPLOAD_PATH_CNI || 'uploads/cni'}/${req.file.filename}`;
 
     // Met à jour les infos du compte et passe la demande en EN_ATTENTE
@@ -66,8 +82,9 @@ const demanderDevenirHote = async (req, res) => {
     }
 
     return res.status(201).json({
-      message: 'Demande envoyée. Un administrateur doit approuver votre compte avant de pouvoir publier des annonces.',
+      message: 'Pièce d\'identité vérifiée. Demande envoyée : un administrateur doit approuver votre compte avant que vous puissiez publier des annonces.',
       statut_verification: 'EN_ATTENTE',
+      cni_valide: true,
     });
   } catch (err) {
     console.error('Erreur demande devenir hôte:', err);
@@ -77,7 +94,6 @@ const demanderDevenirHote = async (req, res) => {
 
 // ============================================
 // STATUT DE LA DEMANDE (Client connecté)
-// Permet au front d'afficher où en est la demande.
 // ============================================
 const getStatutVerification = async (req, res) => {
   const client_id = req.user.id;
@@ -99,7 +115,6 @@ const getStatutVerification = async (req, res) => {
 
 // ============================================
 // LISTER LES UTILISATEURS (Admin)
-// Filtre optionnel par statut_verification (ex: EN_ATTENTE)
 // ============================================
 const getUtilisateursAdmin = async (req, res) => {
   const { statut_verification, typeCompte } = req.query;
@@ -136,7 +151,6 @@ const getUtilisateursAdmin = async (req, res) => {
 
 // ============================================
 // APPROUVER UNE DEMANDE "DEVENIR HÔTE" (Admin)
-// Passe statut_verification à APPROUVE et typeCompte à HOTE
 // ============================================
 const approuverUtilisateur = async (req, res) => {
   const { id } = req.params;
@@ -172,7 +186,6 @@ const approuverUtilisateur = async (req, res) => {
 
 // ============================================
 // REJETER UNE DEMANDE "DEVENIR HÔTE" (Admin)
-// Le compte reste CLIENT, statut_verification passe à REJETE
 // ============================================
 const rejeterUtilisateur = async (req, res) => {
   const { id } = req.params;

@@ -1,10 +1,11 @@
 const pool = require('../config/db');
+const { classerAnnonces } = require('../services/scoring.service');
 
 // ============================================
-// HELPER — normalise la liste d'équipements reçue (R1)
+// HELPERS — normalisation de listes de codes (R1 / C1)
 // Accepte : tableau de codes, chaîne JSON "[...]", ou "a,b,c".
 // ============================================
-const parseEquipements = (raw) => {
+const parseCodes = (raw) => {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw.map((c) => String(c).trim()).filter(Boolean);
   const s = String(raw).trim();
@@ -16,7 +17,7 @@ const parseEquipements = (raw) => {
   return s.split(',').map((c) => c.trim()).filter(Boolean);
 };
 
-// Lie une annonce à des équipements (par leur code), en remplaçant les liens existants.
+// Lie une annonce à des équipements (par code), remplace les liens si demandé.
 const lierEquipements = async (annonceId, codes, remplacer = false) => {
   if (remplacer) {
     await pool.query('DELETE FROM annonce_equipements WHERE annonce_id = $1', [annonceId]);
@@ -30,6 +31,41 @@ const lierEquipements = async (annonceId, codes, remplacer = false) => {
   );
 };
 
+// Lie une annonce à des caractéristiques (par code), remplace les liens si demandé.
+const lierCaracteristiques = async (annonceId, codes, remplacer = false) => {
+  if (remplacer) {
+    await pool.query('DELETE FROM annonce_caracteristiques WHERE annonce_id = $1', [annonceId]);
+  }
+  if (!codes || codes.length === 0) return;
+  await pool.query(
+    `INSERT INTO annonce_caracteristiques (annonce_id, caracteristique_id)
+     SELECT $1, c.id FROM caracteristiques c WHERE c.code = ANY($2::varchar[])
+     ON CONFLICT DO NOTHING`,
+    [annonceId, codes]
+  );
+};
+
+// Résout l'id d'un type de chambre depuis un id numérique OU un code.
+const resoudreTypeId = async (type_id, type) => {
+  if (type_id) return parseInt(type_id) || null;
+  if (type) {
+    const r = await pool.query('SELECT id FROM types_chambre WHERE code = $1', [String(type).trim()]);
+    return r.rows[0] ? r.rows[0].id : null;
+  }
+  return null;
+};
+
+// Résout l'id d'un pays depuis un id numérique OU un code (défaut : Cameroun).
+const resoudrePaysId = async (pays_id, pays) => {
+  if (pays_id) return parseInt(pays_id) || null;
+  if (pays) {
+    const r = await pool.query('SELECT id FROM pays WHERE code = $1', [String(pays).trim().toUpperCase()]);
+    if (r.rows[0]) return r.rows[0].id;
+  }
+  const def = await pool.query("SELECT id FROM pays WHERE code = 'CM'");
+  return def.rows[0] ? def.rows[0].id : null;
+};
+
 // Valide une période [debut, fin] optionnelle. Retourne un message d'erreur ou null.
 const validerPeriode = (debut, fin) => {
   if ((debut && !fin) || (!debut && fin)) {
@@ -41,6 +77,31 @@ const validerPeriode = (debut, fin) => {
   return null;
 };
 
+// Bloc SELECT commun (annonce enrichie : hôte, note, images, équipements,
+// caractéristiques, type, pays + devise).
+const SELECT_ANNONCE = `
+  SELECT a.*, p.nom AS hote_nom, p.prenom AS hote_prenom,
+         tc.code AS type_code, tc.nom AS type_nom,
+         py.code AS pays_code, py.nom AS pays_nom,
+         py.devise_code, py.devise_symbole,
+         COALESCE(AVG(av.note), 0) AS note_moyenne,
+         COUNT(DISTINCT av.id) AS nb_avis,
+         ARRAY_AGG(DISTINCT ai.url)  FILTER (WHERE ai.url  IS NOT NULL) AS images,
+         ARRAY_AGG(DISTINCT e.code)  FILTER (WHERE e.code  IS NOT NULL) AS equipements,
+         ARRAY_AGG(DISTINCT c.code)  FILTER (WHERE c.code  IS NOT NULL) AS caracteristiques
+  FROM annonces a
+  JOIN utilisateurs p ON a.hote_id = p.id
+  LEFT JOIN types_chambre tc ON a.type_id = tc.id
+  LEFT JOIN pays py ON a.pays_id = py.id
+  LEFT JOIN evaluations av ON a.id = av.annonce_id
+  LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
+  LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
+  LEFT JOIN equipements e ON ae.equipement_id = e.id
+  LEFT JOIN annonce_caracteristiques ac ON a.id = ac.annonce_id
+  LEFT JOIN caracteristiques c ON ac.caracteristique_id = c.id
+`;
+const GROUP_ANNONCE = `GROUP BY a.id, p.id, tc.id, py.id`;
+
 // ============================================
 // CRÉER UNE ANNONCE (Hôte)
 // ============================================
@@ -48,43 +109,46 @@ const creerAnnonce = async (req, res) => {
   const {
     titre, description, ville, quartier, adresse, prixParNuit, capacite,
     superficie, date_debut_validite, date_fin_validite,
+    type_id, type, pays_id, pays,
   } = req.body;
   const hote_id = req.user.id;
 
   if (!titre || !ville || !prixParNuit || !capacite) {
     return res.status(400).json({ message: 'titre, ville, prixParNuit et capacite sont obligatoires' });
   }
-
   if (Number(prixParNuit) <= 0) {
     return res.status(400).json({ message: 'Le prix par nuit doit être supérieur à 0' });
   }
-
   if (Number(capacite) < 1) {
     return res.status(400).json({ message: 'La capacité doit être au moins 1' });
   }
-
   const erreurPeriode = validerPeriode(date_debut_validite, date_fin_validite);
   if (erreurPeriode) {
     return res.status(400).json({ message: erreurPeriode });
   }
 
   try {
+    const typeId = await resoudreTypeId(type_id, type);
+    const paysId = await resoudrePaysId(pays_id, pays);
+
     const result = await pool.query(
       `INSERT INTO annonces
          (hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite,
-          superficie, date_debut_validite, date_fin_validite)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          superficie, date_debut_validite, date_fin_validite, type_id, pays_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         hote_id, titre, description, ville, quartier, adresse, prixParNuit, capacite,
         superficie || null, date_debut_validite || null, date_fin_validite || null,
+        typeId, paysId,
       ]
     );
 
     const annonce = result.rows[0];
 
-    // Équipements sélectionnés (R1)
-    await lierEquipements(annonce.id, parseEquipements(req.body.equipements));
+    // Équipements fournis (R1) + caractéristiques intrinsèques (C1)
+    await lierEquipements(annonce.id, parseCodes(req.body.equipements));
+    await lierCaracteristiques(annonce.id, parseCodes(req.body.caracteristiques));
 
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
@@ -109,75 +173,76 @@ const creerAnnonce = async (req, res) => {
 };
 
 // ============================================
-// LISTER TOUTES LES ANNONCES (Public)
+// LISTER LES ANNONCES (Public) — avec scoring du modèle (Option A)
+//
+// Filtres "durs" (SQL) : ville, capacite, prix_min/prix_max, type, pays.
+// Préférences "douces" (modèle) : equipements[] + caracteristiques[] désirés,
+// budget (ou prix_max×nb_nuits), nb_nuits → servent à scorer/classer.
+//
+// tri = 'pertinence' → classement par le modèle (scoring.service)
+// tri = 'populaire'  → note moyenne puis nb d'avis
+// (défaut)           → date de publication décroissante
 // ============================================
 const getAnnonces = async (req, res) => {
-  const { ville, capacite, prix_min, prix_max, page = 1, limit = 10, tri } = req.query;
-  const offset = (page - 1) * limit;
+  const {
+    ville, capacite, prix_min, prix_max, type, pays,
+    nb_nuits, budget, page = 1, limit = 10, tri,
+  } = req.query;
 
-  let query = `
-    SELECT a.*, p.nom AS hote_nom, p.prenom AS hote_prenom,
-           COALESCE(AVG(av.note), 0) AS note_moyenne,
-           COUNT(DISTINCT av.id) AS nb_avis,
-           ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images,
-           ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements
-    FROM annonces a
-    JOIN utilisateurs p ON a.hote_id = p.id
-    LEFT JOIN evaluations av ON a.id = av.annonce_id
-    LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
-    LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
-    LEFT JOIN equipements e ON ae.equipement_id = e.id
-    WHERE a.statut = 'DISPONIBLE'
-  `;
+  const prefs = [
+    ...parseCodes(req.query.equipements),
+    ...parseCodes(req.query.caracteristiques),
+  ];
 
+  let query = SELECT_ANNONCE + ` WHERE a.statut = 'DISPONIBLE'`;
   const params = [];
-  let paramIndex = 1;
+  let i = 1;
 
-  if (ville) {
-    query += ` AND LOWER(a.ville) LIKE LOWER($${paramIndex++})`;
-    params.push(`%${ville}%`);
-  }
-  if (capacite) {
-    query += ` AND a.capacite >= $${paramIndex++}`;
-    params.push(parseInt(capacite));
-  }
-  if (prix_min) {
-    query += ` AND a.prixParNuit >= $${paramIndex++}`;
-    params.push(parseFloat(prix_min));
-  }
-  if (prix_max) {
-    query += ` AND a.prixParNuit <= $${paramIndex++}`;
-    params.push(parseFloat(prix_max));
-  }
+  if (ville)     { query += ` AND LOWER(a.ville) LIKE LOWER($${i++})`; params.push(`%${ville}%`); }
+  if (capacite)  { query += ` AND a.capacite >= $${i++}`;            params.push(parseInt(capacite)); }
+  if (prix_min)  { query += ` AND a.prixParNuit >= $${i++}`;         params.push(parseFloat(prix_min)); }
+  if (prix_max)  { query += ` AND a.prixParNuit <= $${i++}`;         params.push(parseFloat(prix_max)); }
+  if (type)      { query += ` AND tc.code = $${i++}`;                params.push(String(type).trim()); }
+  if (pays)      { query += ` AND py.code = $${i++}`;                params.push(String(pays).trim().toUpperCase()); }
 
-  const orderBy = tri === 'populaire'
-    ? 'ORDER BY note_moyenne DESC, nb_avis DESC'
-    : 'ORDER BY a.datePublication DESC';
-
-  query += ` GROUP BY a.id, p.nom, p.prenom ${orderBy} LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-  params.push(parseInt(limit), parseInt(offset));
+  // On ramène les candidats (plafonnés) puis on trie/scorera en JS.
+  query += ` ${GROUP_ANNONCE} LIMIT 500`;
 
   try {
     const result = await pool.query(query, params);
+    let annonces = result.rows.map((a) => ({
+      ...a,
+      note_moyenne: Number(a.note_moyenne) || 0,
+      nb_avis: Number(a.nb_avis) || 0,
+    }));
 
-    let countQuery = `SELECT COUNT(*) FROM annonces a WHERE a.statut = 'DISPONIBLE'`;
-    const countParams = [];
-    let countIndex = 1;
-    if (ville) { countQuery += ` AND LOWER(a.ville) LIKE LOWER($${countIndex++})`; countParams.push(`%${ville}%`); }
-    if (capacite) { countQuery += ` AND a.capacite >= $${countIndex++}`; countParams.push(parseInt(capacite)); }
-    if (prix_min) { countQuery += ` AND a.prixParNuit >= $${countIndex++}`; countParams.push(parseFloat(prix_min)); }
-    if (prix_max) { countQuery += ` AND a.prixParNuit <= $${countIndex++}`; countParams.push(parseFloat(prix_max)); }
+    // ── Application du modèle / tri ──────────────────────
+    const nbNuits = Math.max(1, parseInt(nb_nuits) || 1);
+    if (tri === 'pertinence') {
+      const budgetTotal = budget
+        ? parseFloat(budget)
+        : (prix_max ? parseFloat(prix_max) * nbNuits : Infinity);
+      annonces = classerAnnonces(annonces, { nbNuits, budget: budgetTotal, prefs });
+    } else if (tri === 'populaire') {
+      annonces.sort((x, y) => y.note_moyenne - x.note_moyenne || y.nb_avis - x.nb_avis);
+    } else {
+      annonces.sort((x, y) => new Date(y.datepublication) - new Date(x.datepublication));
+    }
 
-    const countResult = await pool.query(countQuery, countParams);
-    const total = parseInt(countResult.rows[0].count);
+    // ── Pagination (en mémoire, jeu déjà plafonné) ───────
+    const total = annonces.length;
+    const pageNum = parseInt(page) || 1;
+    const lim = parseInt(limit) || 10;
+    const start = (pageNum - 1) * lim;
+    const pageItems = annonces.slice(start, start + lim);
 
     return res.status(200).json({
-      annonces: result.rows,
+      annonces: pageItems,
       pagination: {
         total,
-        page: parseInt(page),
-        limit: parseInt(limit),
-        total_pages: Math.ceil(total / limit),
+        page: pageNum,
+        limit: lim,
+        total_pages: Math.ceil(total / lim),
       },
     });
   } catch (err) {
@@ -194,19 +259,7 @@ const getAnnonceById = async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT a.*, p.nom AS hote_nom, p.prenom AS hote_prenom,
-              COALESCE(AVG(av.note), 0) AS note_moyenne,
-              COUNT(DISTINCT av.id) AS nb_avis,
-              ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images,
-              ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements
-       FROM annonces a
-       JOIN utilisateurs p ON a.hote_id = p.id
-       LEFT JOIN evaluations av ON a.id = av.annonce_id
-       LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
-       LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
-       LEFT JOIN equipements e ON ae.equipement_id = e.id
-       WHERE a.id = $1
-       GROUP BY a.id, p.nom, p.prenom`,
+      `${SELECT_ANNONCE} WHERE a.id = $1 ${GROUP_ANNONCE}`,
       [id]
     );
 
@@ -230,16 +283,27 @@ const getMesAnnonces = async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT a.*,
+              tc.code AS type_code, tc.nom AS type_nom,
+              py.code AS pays_code, py.nom AS pays_nom,
+              py.devise_code, py.devise_symbole,
               COALESCE(AVG(av.note), 0) AS note_moyenne,
               COUNT(DISTINCT av.id) AS nb_avis,
               COUNT(DISTINCT r.idReservation) AS nb_reservations,
-              ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images
+              ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images,
+              ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements,
+              ARRAY_AGG(DISTINCT c.code) FILTER (WHERE c.code IS NOT NULL) AS caracteristiques
        FROM annonces a
+       LEFT JOIN types_chambre tc ON a.type_id = tc.id
+       LEFT JOIN pays py ON a.pays_id = py.id
        LEFT JOIN evaluations av ON a.id = av.annonce_id
        LEFT JOIN reservations r ON a.id = r.annonce_id
        LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
+       LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
+       LEFT JOIN equipements e ON ae.equipement_id = e.id
+       LEFT JOIN annonce_caracteristiques ac ON a.id = ac.annonce_id
+       LEFT JOIN caracteristiques c ON ac.caracteristique_id = c.id
        WHERE a.hote_id = $1
-       GROUP BY a.id
+       GROUP BY a.id, tc.id, py.id
        ORDER BY a.datePublication DESC`,
       [hote_id]
     );
@@ -253,7 +317,7 @@ const getMesAnnonces = async (req, res) => {
 
 // ============================================
 // VILLES LES PLUS POPULAIRES (Public)
-// Classées par nombre d'hôtes distincts décroissant
+// Conservé pour compatibilité (sections de l'accueil).
 // ============================================
 const getVillesPopulaires = async (req, res) => {
   const { limit = 10 } = req.query;
@@ -277,15 +341,12 @@ const getVillesPopulaires = async (req, res) => {
 
 // ============================================
 // MODIFIER UNE ANNONCE (Hôte)
-// FIX: on récupère d'abord les valeurs actuelles pour ne pas écraser avec null
-// FIX: quartier ajouté
 // ============================================
 const modifierAnnonce = async (req, res) => {
   const { id } = req.params;
   const hote_id = req.user.id;
 
   try {
-    // Récupérer l'annonce actuelle
     const actuelle = await pool.query(
       'SELECT * FROM annonces WHERE id = $1 AND hote_id = $2',
       [id, hote_id]
@@ -297,7 +358,6 @@ const modifierAnnonce = async (req, res) => {
 
     const courante = actuelle.rows[0];
 
-    // Fusionner : utiliser la nouvelle valeur si fournie, sinon garder l'ancienne
     const titre      = req.body.titre      !== undefined ? req.body.titre      : courante.titre;
     const description= req.body.description!== undefined ? req.body.description: courante.description;
     const ville      = req.body.ville      !== undefined ? req.body.ville      : courante.ville;
@@ -312,6 +372,14 @@ const modifierAnnonce = async (req, res) => {
     const dateFinValidite = req.body.date_fin_validite !== undefined
       ? (req.body.date_fin_validite || null) : courante.date_fin_validite;
 
+    // Type / pays : on ne touche que si fourni
+    const typeId = (req.body.type_id !== undefined || req.body.type !== undefined)
+      ? await resoudreTypeId(req.body.type_id, req.body.type)
+      : courante.type_id;
+    const paysId = (req.body.pays_id !== undefined || req.body.pays !== undefined)
+      ? await resoudrePaysId(req.body.pays_id, req.body.pays)
+      : courante.pays_id;
+
     const erreurPeriode = validerPeriode(dateDebutValidite, dateFinValidite);
     if (erreurPeriode) {
       return res.status(400).json({ message: erreurPeriode });
@@ -321,18 +389,21 @@ const modifierAnnonce = async (req, res) => {
       `UPDATE annonces
        SET titre = $1, description = $2, ville = $3, quartier = $4,
            adresse = $5, prixParNuit = $6, capacite = $7, statut = $8,
-           superficie = $9, date_debut_validite = $10, date_fin_validite = $11
-       WHERE id = $12`,
+           superficie = $9, date_debut_validite = $10, date_fin_validite = $11,
+           type_id = $12, pays_id = $13
+       WHERE id = $14`,
       [titre, description, ville, quartier, adresse, prixParNuit, capacite, statut,
-       superficie, dateDebutValidite, dateFinValidite, id]
+       superficie, dateDebutValidite, dateFinValidite, typeId, paysId, id]
     );
 
-    // Mise à jour des équipements si le champ est fourni (R1)
+    // Équipements (R1) et caractéristiques (C1) : mis à jour seulement si fournis
     if (req.body.equipements !== undefined) {
-      await lierEquipements(id, parseEquipements(req.body.equipements), true);
+      await lierEquipements(id, parseCodes(req.body.equipements), true);
+    }
+    if (req.body.caracteristiques !== undefined) {
+      await lierCaracteristiques(id, parseCodes(req.body.caracteristiques), true);
     }
 
-    // Ajouter nouvelles images si fournies
     if (req.files && req.files.length > 0) {
       for (const file of req.files) {
         const imageUrl = `${process.env.UPLOAD_PATH || 'uploads/images'}/${file.filename}`;
@@ -423,19 +494,27 @@ const supprimerImage = async (req, res) => {
 };
 
 // ============================================
-// HELPER
+// HELPER — annonce enrichie par id (images, équipements, caractéristiques, type, pays)
 // ============================================
 const getAnnonceAvecImages = async (id) => {
   const result = await pool.query(
     `SELECT a.*,
+            tc.code AS type_code, tc.nom AS type_nom,
+            py.code AS pays_code, py.nom AS pays_nom,
+            py.devise_code, py.devise_symbole,
             ARRAY_AGG(DISTINCT ai.url) FILTER (WHERE ai.url IS NOT NULL) AS images,
-            ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements
+            ARRAY_AGG(DISTINCT e.code) FILTER (WHERE e.code IS NOT NULL) AS equipements,
+            ARRAY_AGG(DISTINCT c.code) FILTER (WHERE c.code IS NOT NULL) AS caracteristiques
      FROM annonces a
+     LEFT JOIN types_chambre tc ON a.type_id = tc.id
+     LEFT JOIN pays py ON a.pays_id = py.id
      LEFT JOIN annonce_images ai ON a.id = ai.annonce_id
      LEFT JOIN annonce_equipements ae ON a.id = ae.annonce_id
      LEFT JOIN equipements e ON ae.equipement_id = e.id
+     LEFT JOIN annonce_caracteristiques ac ON a.id = ac.annonce_id
+     LEFT JOIN caracteristiques c ON ac.caracteristique_id = c.id
      WHERE a.id = $1
-     GROUP BY a.id`,
+     GROUP BY a.id, tc.id, py.id`,
     [id]
   );
   return result.rows[0];

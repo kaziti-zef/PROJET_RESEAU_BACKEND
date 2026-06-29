@@ -1,9 +1,9 @@
 const pool = require('../config/db');
+const { getParametres, calculerPourcentageRemboursement } = require('../services/parametres.service');
+const wallet = require('../services/wallet.service');
 
 // ============================================
 // HELPER — Transition automatique CONFIRMEE → TERMINEE
-// Une réservation payée dont la date de fin est passée devient TERMINEE.
-// Indispensable pour autoriser le dépôt d'avis (RG15).
 // ============================================
 const marquerReservationsTerminees = async () => {
   await pool.query(
@@ -22,11 +22,9 @@ const creerReservation = async (req, res) => {
   if (!annonce_id || !dateDebut || !dateFin || !nombrePersonnes) {
     return res.status(400).json({ message: 'Tous les champs sont obligatoires' });
   }
-
   if (new Date(dateFin) <= new Date(dateDebut)) {
     return res.status(400).json({ message: 'La date de fin doit être après la date de début' });
   }
-
   if (Number(nombrePersonnes) < 1) {
     return res.status(400).json({ message: 'Le nombre de personnes doit être au moins 1' });
   }
@@ -47,29 +45,20 @@ const creerReservation = async (req, res) => {
     }
 
     if (nombrePersonnes > annonce.rows[0].capacite) {
-      return res.status(400).json({
-        message: `La chambre accepte maximum ${annonce.rows[0].capacite} personne(s)`,
-      });
+      return res.status(400).json({ message: `La chambre accepte maximum ${annonce.rows[0].capacite} personne(s)` });
     }
-
     if (annonce.rows[0].hote_id === client_id) {
       return res.status(400).json({ message: 'Vous ne pouvez pas réserver votre propre chambre' });
     }
 
-    // Période de validité de l'annonce (I2) : on ne peut pas réserver hors de l'intervalle défini
     const { date_debut_validite, date_fin_validite } = annonce.rows[0];
     if (date_debut_validite && new Date(dateDebut) < new Date(date_debut_validite)) {
-      return res.status(400).json({
-        message: `Cette annonce n'est réservable qu'à partir du ${new Date(date_debut_validite).toLocaleDateString('fr-FR')}`,
-      });
+      return res.status(400).json({ message: `Cette annonce n'est réservable qu'à partir du ${new Date(date_debut_validite).toLocaleDateString('fr-FR')}` });
     }
     if (date_fin_validite && new Date(dateFin) > new Date(date_fin_validite)) {
-      return res.status(400).json({
-        message: `Cette annonce n'est réservable que jusqu'au ${new Date(date_fin_validite).toLocaleDateString('fr-FR')}`,
-      });
+      return res.status(400).json({ message: `Cette annonce n'est réservable que jusqu'au ${new Date(date_fin_validite).toLocaleDateString('fr-FR')}` });
     }
 
-    // Conflit de dates — exclure annulées et refusées
     const conflit = await pool.query(
       `SELECT idReservation FROM reservations
        WHERE annonce_id = $1
@@ -94,7 +83,6 @@ const creerReservation = async (req, res) => {
 
     const reservation = result.rows[0];
 
-    // Notifier l'hôte
     const io = req.app.get('io');
     if (io) {
       io.to(`hote_${annonce.rows[0].hote_id}`).emit('nouvelle_reservation', {
@@ -144,8 +132,7 @@ const getMesReservations = async (req, res) => {
 };
 
 // ============================================
-// MODIFIER UNE RÉSERVATION (Client)
-// Possible uniquement si statut = EN_ATTENTE
+// MODIFIER UNE RÉSERVATION (Client) — si EN_ATTENTE
 // ============================================
 const modifierReservation = async (req, res) => {
   const { id } = req.params;
@@ -156,20 +143,15 @@ const modifierReservation = async (req, res) => {
       'SELECT * FROM reservations WHERE idReservation = $1 AND client_id = $2',
       [id, client_id]
     );
-
     if (actuelle.rows.length === 0) {
       return res.status(404).json({ message: 'Réservation introuvable' });
     }
 
     const resa = actuelle.rows[0];
-
     if (resa.statut !== 'EN_ATTENTE') {
-      return res.status(400).json({
-        message: 'Seules les réservations EN_ATTENTE peuvent être modifiées',
-      });
+      return res.status(400).json({ message: 'Seules les réservations EN_ATTENTE peuvent être modifiées' });
     }
 
-    // Fusionner avec les valeurs actuelles
     const dateDebut   = req.body.dateDebut   || resa.datedebut;
     const dateFin     = req.body.dateFin     || resa.datefin;
     const nombrePersonnes = req.body.nombrePersonnes || resa.nombrepersonnes;
@@ -178,31 +160,22 @@ const modifierReservation = async (req, res) => {
       return res.status(400).json({ message: 'La date de fin doit être après la date de début' });
     }
 
-    // Vérifier capacité
     const annonce = await pool.query(
       'SELECT capacite, prixParNuit, date_debut_validite, date_fin_validite FROM annonces WHERE id = $1',
       [resa.annonce_id]
     );
     if (nombrePersonnes > annonce.rows[0].capacite) {
-      return res.status(400).json({
-        message: `La chambre accepte maximum ${annonce.rows[0].capacite} personne(s)`,
-      });
+      return res.status(400).json({ message: `La chambre accepte maximum ${annonce.rows[0].capacite} personne(s)` });
     }
 
-    // Période de validité (I2)
     const { date_debut_validite, date_fin_validite } = annonce.rows[0];
     if (date_debut_validite && new Date(dateDebut) < new Date(date_debut_validite)) {
-      return res.status(400).json({
-        message: `Cette annonce n'est réservable qu'à partir du ${new Date(date_debut_validite).toLocaleDateString('fr-FR')}`,
-      });
+      return res.status(400).json({ message: `Cette annonce n'est réservable qu'à partir du ${new Date(date_debut_validite).toLocaleDateString('fr-FR')}` });
     }
     if (date_fin_validite && new Date(dateFin) > new Date(date_fin_validite)) {
-      return res.status(400).json({
-        message: `Cette annonce n'est réservable que jusqu'au ${new Date(date_fin_validite).toLocaleDateString('fr-FR')}`,
-      });
+      return res.status(400).json({ message: `Cette annonce n'est réservable que jusqu'au ${new Date(date_fin_validite).toLocaleDateString('fr-FR')}` });
     }
 
-    // Vérifier conflit de dates (en excluant la réservation actuelle)
     const conflit = await pool.query(
       `SELECT idReservation FROM reservations
        WHERE annonce_id = $1
@@ -227,10 +200,7 @@ const modifierReservation = async (req, res) => {
       [dateDebut, dateFin, nombrePersonnes, montantTotal, id]
     );
 
-    return res.status(200).json({
-      message: 'Réservation modifiée avec succès',
-      reservation: result.rows[0],
-    });
+    return res.status(200).json({ message: 'Réservation modifiée avec succès', reservation: result.rows[0] });
   } catch (err) {
     console.error('Erreur modification réservation:', err);
     return res.status(500).json({ message: 'Erreur serveur' });
@@ -238,7 +208,7 @@ const modifierReservation = async (req, res) => {
 };
 
 // ============================================
-// RÉSERVATIONS DE L'HÔTE (pour ses annonces)
+// RÉSERVATIONS DE L'HÔTE
 // ============================================
 const getReservationsHote = async (req, res) => {
   const hote_id = req.user.id;
@@ -267,8 +237,7 @@ const getReservationsHote = async (req, res) => {
 };
 
 // ============================================
-// REFUSER UNE RÉSERVATION (Hôte)
-// Possible uniquement si EN_ATTENTE (pas encore payée)
+// REFUSER UNE RÉSERVATION (Hôte) — si EN_ATTENTE
 // ============================================
 const refuserReservation = async (req, res) => {
   const { id } = req.params;
@@ -281,26 +250,20 @@ const refuserReservation = async (req, res) => {
        WHERE r.idReservation = $1 AND a.hote_id = $2`,
       [id, hote_id]
     );
-
     if (check.rows.length === 0) {
       return res.status(403).json({ message: 'Réservation introuvable ou non autorisé' });
     }
 
     const resa = check.rows[0];
-
     if (resa.statut !== 'EN_ATTENTE') {
-      return res.status(400).json({
-        message: 'Impossible de refuser : la réservation n\'est plus en attente',
-      });
+      return res.status(400).json({ message: 'Impossible de refuser : la réservation n\'est plus en attente' });
     }
 
     const result = await pool.query(
-      `UPDATE reservations SET statut = 'REFUSEE'
-       WHERE idReservation = $1 RETURNING *`,
+      `UPDATE reservations SET statut = 'REFUSEE' WHERE idReservation = $1 RETURNING *`,
       [id]
     );
 
-    // Notifier le client
     const io = req.app.get('io');
     if (io) {
       io.to(`client_${resa.client_id}`).emit('reservation_refusee', {
@@ -309,10 +272,7 @@ const refuserReservation = async (req, res) => {
       });
     }
 
-    return res.status(200).json({
-      message: 'Réservation refusée',
-      reservation: result.rows[0],
-    });
+    return res.status(200).json({ message: 'Réservation refusée', reservation: result.rows[0] });
   } catch (err) {
     console.error('Erreur refus réservation:', err);
     return res.status(500).json({ message: 'Erreur serveur' });
@@ -321,21 +281,23 @@ const refuserReservation = async (req, res) => {
 
 // ============================================
 // ANNULER UNE RÉSERVATION (Client ou Hôte)
+// Si la réservation était PAYÉE, un remboursement PARTIEL/TOTAL est
+// calculé selon la politique (réglée par le super-admin) et crédité
+// sur le porte-monnaie du client ; la part correspondante est reprise
+// sur le porte-monnaie de l'hôte. Trace dans `remboursements`. (W2)
 // ============================================
 const annulerReservation = async (req, res) => {
   const { id } = req.params;
   const user = req.user;
   const role = user.role || user.typeCompte;
 
+  const db = await pool.connect();
   try {
     let check;
     if (role === 'CLIENT') {
-      check = await pool.query(
-        'SELECT * FROM reservations WHERE idReservation = $1 AND client_id = $2',
-        [id, user.id]
-      );
+      check = await db.query('SELECT * FROM reservations WHERE idReservation = $1 AND client_id = $2', [id, user.id]);
     } else {
-      check = await pool.query(
+      check = await db.query(
         `SELECT r.* FROM reservations r
          JOIN annonces a ON r.annonce_id = a.id
          WHERE r.idReservation = $1 AND a.hote_id = $2`,
@@ -344,50 +306,91 @@ const annulerReservation = async (req, res) => {
     }
 
     if (check.rows.length === 0) {
+      db.release();
       return res.status(403).json({ message: 'Réservation introuvable ou non autorisé' });
     }
 
     const resa = check.rows[0];
-
     if (['ANNULEE', 'TERMINEE', 'REFUSEE'].includes(resa.statut)) {
+      db.release();
       return res.status(400).json({ message: `Impossible d'annuler une réservation ${resa.statut}` });
     }
 
-    const result = await pool.query(
-      `UPDATE reservations SET statut = 'ANNULEE'
-       WHERE idReservation = $1 RETURNING *`,
-      [id]
-    );
+    // Paiement éventuel à rembourser
+    const paieRes = await db.query('SELECT * FROM paiements WHERE reservation_id = $1', [id]);
+    const paiement = paieRes.rows[0] || null;
+
+    // hote_id (pour reprise de la part hôte + notification)
+    const annonceInfo = await db.query('SELECT hote_id FROM annonces WHERE id = $1', [resa.annonce_id]);
+    const hoteId = annonceInfo.rows[0] ? annonceInfo.rows[0].hote_id : null;
+
+    let remboursement = null;
+
+    await db.query('BEGIN');
+    await db.query(`UPDATE reservations SET statut = 'ANNULEE' WHERE idReservation = $1`, [id]);
+
+    if (paiement) {
+      const params = await getParametres(db);
+      const aujourdhui = new Date(); aujourdhui.setHours(0, 0, 0, 0);
+      const debut = new Date(resa.datedebut); debut.setHours(0, 0, 0, 0);
+      const joursAvant = Math.ceil((debut - aujourdhui) / (1000 * 60 * 60 * 24));
+      const pct = calculerPourcentageRemboursement(joursAvant, params);
+
+      if (pct > 0) {
+        const montantPaye = Number(paiement.montant);
+        const partHote = Math.round(Number(paiement.montant_hote) * pct * 100) / 100;
+        const partPlateforme = Math.round(Number(paiement.commission_plateforme) * pct * 100) / 100;
+        const refundTotal = Math.round((partHote + partPlateforme) * 100) / 100;
+
+        // Crédit du client + reprise (non stricte) sur l'hôte
+        await wallet.crediter(resa.client_id, refundTotal, 'REMBOURSEMENT', `Remboursement annulation #${id}`, id, db);
+        if (hoteId) {
+          await wallet.debiter(hoteId, partHote, 'REMBOURSEMENT', `Reprise sur annulation #${id}`, id, db, false);
+        }
+
+        await db.query(
+          `INSERT INTO remboursements (reservation_id, montant_total, part_hote, part_plateforme, pourcentage)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [id, refundTotal, partHote, partPlateforme, Math.round(pct * 100)]
+        );
+
+        remboursement = {
+          montant_total: refundTotal, part_hote: partHote,
+          part_plateforme: partPlateforme, pourcentage: Math.round(pct * 100),
+          montant_paye: montantPaye,
+        };
+      } else {
+        remboursement = { montant_total: 0, pourcentage: 0, message: 'Délai dépassé : aucun remboursement' };
+      }
+    }
+
+    await db.query('COMMIT');
+
+    const result = await db.query('SELECT * FROM reservations WHERE idReservation = $1', [id]);
 
     // Notifier l'autre partie
     const io = req.app.get('io');
     if (io) {
-      if (role === 'CLIENT') {
-        // Récupérer hote_id via l'annonce
-        const annonceInfo = await pool.query(
-          'SELECT hote_id FROM annonces WHERE id = $1', [resa.annonce_id]
-        );
-        if (annonceInfo.rows.length > 0) {
-          io.to(`hote_${annonceInfo.rows[0].hote_id}`).emit('reservation_annulee', {
-            message: 'Un client a annulé sa réservation',
-            reservation: result.rows[0],
-          });
-        }
+      if (role === 'CLIENT' && hoteId) {
+        io.to(`hote_${hoteId}`).emit('reservation_annulee', { message: 'Un client a annulé sa réservation', reservation: result.rows[0] });
       } else {
-        io.to(`client_${resa.client_id}`).emit('reservation_annulee', {
-          message: 'L\'hôte a annulé votre réservation',
-          reservation: result.rows[0],
-        });
+        io.to(`client_${resa.client_id}`).emit('reservation_annulee', { message: 'L\'hôte a annulé votre réservation', reservation: result.rows[0] });
       }
     }
 
     return res.status(200).json({
-      message: 'Réservation annulée',
+      message: remboursement && remboursement.montant_total > 0
+        ? `Réservation annulée. Remboursement de ${remboursement.montant_total} crédité sur votre porte-monnaie (${remboursement.pourcentage}%).`
+        : 'Réservation annulée.',
       reservation: result.rows[0],
+      remboursement,
     });
   } catch (err) {
+    try { await db.query('ROLLBACK'); } catch { /* ignore */ }
     console.error('Erreur annulation réservation:', err);
     return res.status(500).json({ message: 'Erreur serveur' });
+  } finally {
+    db.release();
   }
 };
 

@@ -15,6 +15,11 @@ const adminAnnonceRoutes = require('./routes/adminAnnonce.routes');
 const superAdminRoutes = require('./routes/superAdmin.routes');
 const equipementRoutes = require('./routes/equipement.routes');
 const hoteRoutes = require('./routes/hote.routes');
+const paysRoutes = require('./routes/pays.routes');
+const typeChambreRoutes = require('./routes/typeChambre.routes');
+const caracteristiqueRoutes = require('./routes/caracteristique.routes');
+const walletRoutes = require('./routes/wallet.routes');
+const parametresRoutes = require('./routes/parametres.routes');
 
 const app = express();
 
@@ -40,7 +45,7 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 // ROUTES API
 // ============================================
 app.use('/api/auth', authRoutes);
-app.use('/api/annonces', annonceRoutes); 
+app.use('/api/annonces', annonceRoutes);
 app.use('/api/reservations', reservationRoutes);
 app.use('/api/paiements', paiementRoutes);
 app.use('/api/evaluations', avisRoutes);
@@ -49,6 +54,11 @@ app.use('/api/admin', adminAnnonceRoutes);
 app.use('/api/admin', superAdminRoutes);
 app.use('/api/equipements', equipementRoutes);
 app.use('/api/hote', hoteRoutes);
+app.use('/api/pays', paysRoutes);
+app.use('/api/types-chambre', typeChambreRoutes);
+app.use('/api/caracteristiques', caracteristiqueRoutes);
+app.use('/api/wallet', walletRoutes);
+app.use('/api/admin', parametresRoutes);
 
 // Route de santé
 app.get('/api/health', (req, res) => {

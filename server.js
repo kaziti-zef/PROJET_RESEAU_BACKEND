@@ -33,7 +33,7 @@ const start = async () => {
     // Créer les tables si elles n'existent pas
     await initDB();
 
-    server.listen(PORT, () => {
+    server.listen(PORT,"0.0.0.0" , () => {
       console.log('');
       console.log('🏠 ================================');
       console.log('   ROOM RENTING API — DÉMARRÉ');

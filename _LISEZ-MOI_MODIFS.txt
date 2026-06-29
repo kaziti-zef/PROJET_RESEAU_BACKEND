@@ -1,0 +1,27 @@
+=========================================================
+  PROJET_RESEAU_BACKEND — modifications (branche daiki-branch)
+  Décompressez cette archive À LA RACINE du dépôt backend.
+  Les fichiers remplacent/complètent l'existant aux bons chemins.
+=========================================================
+
+AUCUNE nouvelle dépendance npm. initDB.js est non destructif
+(tables/colonnes créées au démarrage, données conservées).
+
+Chantiers couverts :
+- Modèle (scoring) : services/scoring.service.js + intégration dans
+  controllers/annonce.controller.js (tri=pertinence).
+- Pays/devise/villes, types de chambre, caractéristiques :
+  controllers + routes + initDB (catalogues seedés).
+- Finances : services/{wallet,parametres}.service.js,
+  controllers/{wallet,parametres,paiement,reservation}.controller.js,
+  routes/{wallet,parametres}.routes.js.
+- Vérification CNI simulée : services/cniVerification.js +
+  controllers/utilisateur.controller.js.
+
+Variables .env optionnelles (valeurs par défaut sinon) :
+- SCORING_ALPHA3, SCORING_COUT_RATIO, ... (poids du modèle)
+- CNI_SIMULATION = heuristique | always_valid | always_invalid
+- SUPER_ADMIN_EMAIL / SUPER_ADMIN_PASSWORD (seed super-admin)
+
+La commission n'est plus lue dans .env : elle est réglée par le
+super-admin (table parametres_plateforme / onglet Finance).
